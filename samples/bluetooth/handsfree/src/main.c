@@ -67,6 +67,7 @@ static void battery(struct bt_conn *conn, uint32_t value)
 static void ring_cb(struct bt_conn *conn)
 {
 	printk("Incoming Call...\n");
+	bt_hfp_hf_send_cmd(conn, BT_HFP_HF_ATA);
 }
 
 static struct bt_hfp_hf_cb hf_cb = {

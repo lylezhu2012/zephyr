@@ -44,6 +44,12 @@ static void ag_connected(struct bt_hfp_ag *ag)
 {
 	printk("HFP AG connected!\n");
 	k_work_schedule(&call_connect_work, K_MSEC(CONFIG_BT_HFP_AG_START_CALL_DELAY_TIME));
+
+	int err;
+
+	err = bt_hfp_ag_terminate(ag);
+	printk("call bt_hfp_ag_terminate (err %d)\n", err);
+
 }
 
 static void ag_disconnected(struct bt_hfp_ag *ag)
@@ -70,6 +76,8 @@ static void ag_accept(struct bt_hfp_ag *ag)
 {
 	printk("Call Accepted\n");
 	k_work_schedule(&call_disconnect_work, K_SECONDS(10));
+	int err = bt_hfp_ag_terminate(ag);
+	printk("call bt_hfp_ag_terminate (err %d)\n", err);
 }
 
 static void ag_reject(struct bt_hfp_ag *ag)

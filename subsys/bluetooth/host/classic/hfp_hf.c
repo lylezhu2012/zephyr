@@ -431,13 +431,35 @@ int ring_handle(struct at_client *hf_at)
 	return 0;
 }
 
+int bcs_handle(struct at_client *hf_at)
+{
+	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
+	uint32_t index;
+	int err;
+
+	err = at_get_number(hf_at, &index);
+	if (err < 0) {
+		LOG_ERR("could not get the Index");
+		return err;
+	}
+
+	err = hfp_hf_send_cmd(hf, NULL, NULL, "AT+BCS=1");
+	if (err < 0) {
+		hf_slc_error(hf_at);
+		return err;
+	}
+
+	return 0;
+}
+
 static const struct unsolicited {
 	const char *cmd;
 	enum at_cmd_type type;
 	int (*func)(struct at_client *hf_at);
 } handlers[] = {
 	{ "CIEV", AT_CMD_TYPE_UNSOLICITED, ciev_handle },
-	{ "RING", AT_CMD_TYPE_OTHER, ring_handle }
+	{ "RING", AT_CMD_TYPE_OTHER, ring_handle },
+	{ "BCS", AT_CMD_TYPE_UNSOLICITED, bcs_handle }
 };
 
 static const struct unsolicited *hfp_hf_unsol_lookup(struct at_client *hf_at)
@@ -588,7 +610,7 @@ int cind_finish(struct at_client *hf_at, enum at_result result,
 	return 0;
 }
 
-int brsf_finish(struct at_client *hf_at, enum at_result result,
+int bac_finish(struct at_client *hf_at, enum at_result result,
 		enum at_cme cme_err)
 {
 	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
@@ -601,6 +623,27 @@ int brsf_finish(struct at_client *hf_at, enum at_result result,
 	}
 
 	err = hfp_hf_send_cmd(hf, cind_resp, cind_finish, "AT+CIND=?");
+	if (err < 0) {
+		hf_slc_error(hf_at);
+		return err;
+	}
+
+	return 0;
+}
+
+int brsf_finish(struct at_client *hf_at, enum at_result result,
+		enum at_cme cme_err)
+{
+	struct bt_hfp_hf *hf = CONTAINER_OF(hf_at, struct bt_hfp_hf, at);
+	int err;
+
+	if (result != AT_RESULT_OK) {
+		LOG_ERR("SLC Connection ERROR in response");
+		hf_slc_error(hf_at);
+		return -EINVAL;
+	}
+
+	err = hfp_hf_send_cmd(hf, NULL, bac_finish, "AT+BAC=1");
 	if (err < 0) {
 		hf_slc_error(hf_at);
 		return err;

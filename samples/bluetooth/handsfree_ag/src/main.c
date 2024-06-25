@@ -97,6 +97,11 @@ static void ag_incoming(struct bt_hfp_ag *ag, const char *number)
 	k_work_cancel_delayable(&call_connect_work);
 }
 
+static void ag_codec(struct bt_hfp_ag *ag, uint32_t ids)
+{
+	printk("Remote supported codec ids 0x%08X\n", ids);
+}
+
 static struct bt_hfp_ag_cb ag_cb = {
 	.connected = ag_connected,
 	.disconnected = ag_disconnected,
@@ -108,6 +113,7 @@ static struct bt_hfp_ag_cb ag_cb = {
 	.accept = ag_accept,
 	.reject = ag_reject,
 	.terminate = ag_terminate,
+	.codec = ag_codec,
 };
 
 static uint8_t sdp_discover_cb(struct bt_conn *conn, struct bt_sdp_client_result *result)

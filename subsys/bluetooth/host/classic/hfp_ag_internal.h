@@ -10,7 +10,7 @@
  */
 
 /* HFP AG Supported features */
-#define BT_HFP_AG_SUPPORTED_FEATURES (BT_HFP_AG_FEATURE_INBAND_RINGTONE | BT_HFP_AG_FEATURE_EXT_ERR)
+#define BT_HFP_AG_SUPPORTED_FEATURES (BT_HFP_AG_FEATURE_INBAND_RINGTONE | BT_HFP_AG_FEATURE_EXT_ERR | BT_HFP_AG_FEATURE_CODEC_NEG)
 
 /* bt_hfp_ag flags: the flags defined here represent HFP AG parameters */
 enum {

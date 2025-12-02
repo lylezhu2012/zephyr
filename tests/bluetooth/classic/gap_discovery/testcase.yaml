@@ -1,0 +1,11 @@
+tests:
+  bluetooth.classic.gap.discovery:
+    build_only: true
+    platform_allow:
+    - native_sim
+    integration_platforms:
+    - native_sim
+    tags:
+    - bluetooth
+    - gap
+    timeout: 60

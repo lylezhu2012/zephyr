@@ -626,6 +626,8 @@ static int send_iso(struct bt_conn *conn, struct net_buf *buf, uint8_t flags)
 static int send_sco(struct bt_conn *conn, struct net_buf *buf, uint8_t flags)
 {
 	struct bt_hci_sco_hdr *hdr;
+	int err;
+	uint16_t count;
 
 	switch (flags) {
 	case FRAG_SINGLE:
@@ -641,7 +643,20 @@ static int send_sco(struct bt_conn *conn, struct net_buf *buf, uint8_t flags)
 
 	net_buf_push_u8(buf, BT_HCI_H4_SCO);
 
-	return bt_send(buf);
+	err = bt_send(buf);
+	if (err != 0) {
+		return err;
+	}
+
+	atomic_inc(&conn->sco.num_completed_packets);
+
+	count = atomic_clear(&conn->sco.num_completed_packets);
+	err = bt_hci_sco_simulate_num_completed_packets(conn, count);
+	if (err != 0) {
+		atomic_add(&conn->sco.num_completed_packets, count);
+	}
+
+	return 0;
 }
 
 static inline uint16_t conn_mtu(struct bt_conn *conn)
@@ -2498,6 +2513,7 @@ struct bt_conn *bt_conn_add_sco(const bt_addr_t *peer, int link_type)
 	sco_conn->get_and_clear_cb = sco_get_and_clear_cb;
 	sco_conn->has_data = sco_has_data;
 	k_fifo_init(&sco_conn->sco.tx_queue);
+	atomic_clear(&sco_conn->sco.num_completed_packets);
 #endif /* CONFIG_BT_VOICE_OVER_HCI */
 
 	if (link_type == BT_HCI_SCO) {

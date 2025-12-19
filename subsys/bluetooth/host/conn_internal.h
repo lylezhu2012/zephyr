@@ -175,6 +175,9 @@ struct bt_conn_sco {
 	struct k_fifo           tx_queue;
 #endif /* CONFIG_BT_VOICE_OVER_HCI */
 
+	/* Number of Completed Packets Count */
+	atomic_t                num_completed_packets;
+
 	uint16_t                pkt_type;
 	uint8_t                 dev_class[3];
 	uint8_t                 link_type;

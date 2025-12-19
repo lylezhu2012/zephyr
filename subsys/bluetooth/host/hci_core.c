@@ -4633,6 +4633,55 @@ static int bt_recv(const struct device *dev, struct net_buf *buf)
 	return err;
 }
 
+#if defined(CONFIG_BT_VOICE_OVER_HCI)
+int bt_hci_sco_simulate_num_completed_packets(struct bt_conn *conn, uint16_t count)
+{
+	struct net_buf *buf;
+	struct bt_hci_evt_hdr *evt_hdr;
+	struct bt_hci_evt_num_completed_packets *evt;
+	struct bt_hci_handle_count *h;
+	int err;
+
+	if (BT_CMD_TEST(bt_dev.supported_commands, 10, 4)) {
+		return 0;
+	}
+
+	if (!bt_conn_is_sco(conn)) {
+		return -EINVAL;
+	}
+
+	if (count == 0) {
+		return -EINVAL;
+	}
+
+	buf = bt_buf_get_evt(BT_HCI_EVT_NUM_COMPLETED_PACKETS, false, K_FOREVER);
+	if (buf == NULL) {
+		return -ENOBUFS;
+	}
+
+	evt_hdr = net_buf_add(buf, sizeof(*evt_hdr));
+	evt_hdr->evt = BT_HCI_EVT_NUM_COMPLETED_PACKETS;
+
+	evt = net_buf_add(buf, sizeof(*evt));
+	evt->num_handles = 1U;
+
+	h = net_buf_add(buf, sizeof(*h));
+	h->handle = sys_cpu_to_le16(conn->handle);
+	h->count = sys_cpu_to_le16(count);
+
+	evt_hdr->len = buf->len - sizeof(*evt_hdr);
+
+	err = bt_recv(bt_dev.hci, buf);
+	if (err != 0) {
+		net_buf_unref(buf);
+
+		return err;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_BT_VOICE_OVER_HCI */
+
 void bt_finalize_init(void)
 {
 	atomic_set_bit(bt_dev.flags, BT_DEV_READY);

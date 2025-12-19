@@ -580,3 +580,5 @@ int bt_hci_le_read_max_data_len(uint16_t *tx_octets, uint16_t *tx_time);
 bool bt_drv_quirk_no_auto_dle(void);
 
 void bt_tx_irq_raise(void);
+
+int bt_hci_sco_simulate_num_completed_packets(struct bt_conn *conn, uint16_t count);

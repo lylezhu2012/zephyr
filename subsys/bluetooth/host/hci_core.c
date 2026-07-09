@@ -2127,12 +2127,24 @@ static void le_conn_update_complete(struct net_buf *buf)
 }
 
 #if defined(CONFIG_BT_HCI_ACL_FLOW_CONTROL)
+static int set_controller_to_host_flow_control(uint8_t flow_control)
+{
+	struct net_buf *buf;
+
+	buf = bt_hci_cmd_alloc(K_FOREVER);
+	if (buf == NULL) {
+		return -ENOBUFS;
+	}
+
+	net_buf_add_u8(buf, flow_control);
+	return bt_hci_cmd_send_sync(BT_HCI_OP_SET_CTL_TO_HOST_FLOW, buf, NULL);
+}
+
 static int set_flow_control(void)
 {
 	struct bt_hci_cp_host_buffer_size *hbs;
 	struct net_buf *buf;
 	int err;
-	uint8_t flow_control = BT_HCI_CTL_TO_HOST_FLOW_ENABLE;
 
 	/* Check if host flow control is actually supported */
 	if (!BT_CMD_TEST(bt_dev.supported_commands, 10, 5)) {
@@ -2149,10 +2161,9 @@ static int set_flow_control(void)
 	(void)memset(hbs, 0, sizeof(*hbs));
 	hbs->acl_mtu = sys_cpu_to_le16(CONFIG_BT_BUF_ACL_RX_SIZE);
 	hbs->acl_pkts = sys_cpu_to_le16(BT_BUF_HCI_ACL_RX_COUNT);
-	if (IS_ENABLED(CONFIG_BT_VOICE_OVER_HCI)) {
+	if (IS_ENABLED(CONFIG_BT_HCI_SCO_FLOW_CONTROL)) {
 		hbs->sco_mtu = CONFIG_BT_SCO_RX_BUF_SIZE;
 		hbs->sco_pkts = sys_cpu_to_le16(CONFIG_BT_SCO_RX_BUF_COUNT);
-		flow_control = BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_ON;
 	}
 
 	err = bt_hci_cmd_send_sync(BT_HCI_OP_HOST_BUFFER_SIZE, buf, NULL);
@@ -2160,13 +2171,21 @@ static int set_flow_control(void)
 		return err;
 	}
 
-	buf = bt_hci_cmd_alloc(K_FOREVER);
-	if (!buf) {
-		return -ENOBUFS;
+	if (IS_ENABLED(CONFIG_BT_HCI_SCO_FLOW_CONTROL)) {
+		err = set_controller_to_host_flow_control(BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_ON);
+		if (err == 0) {
+			return 0;
+		}
+
+		LOG_WRN("Controller to host flow HCI sync data packets control not supported");
 	}
 
-	net_buf_add_u8(buf, flow_control);
-	return bt_hci_cmd_send_sync(BT_HCI_OP_SET_CTL_TO_HOST_FLOW, buf, NULL);
+	err = set_controller_to_host_flow_control(BT_HCI_CTL_TO_HOST_FLOW_ENABLE);
+	if (err != 0) {
+		return err;
+	}
+
+	return 0;
 }
 #endif /* CONFIG_BT_HCI_ACL_FLOW_CONTROL */
 

@@ -48,11 +48,11 @@ static void sco_in_pool_destroy(struct net_buf *buf)
 
 	cb = (bt_sco_buf_rx_freed_cb_t)atomic_ptr_get(&buf_rx_freed_cb);
 
-#if defined(CONFIG_BT_HCI_ACL_FLOW_CONTROL)
+#if defined(CONFIG_BT_HCI_SCO_FLOW_CONTROL)
 	bt_hci_host_num_completed_packets(buf);
 #else
 	net_buf_destroy(buf);
-#endif /* CONFIG_BT_HCI_ACL_FLOW_CONTROL */
+#endif /* CONFIG_BT_HCI_SCO_FLOW_CONTROL */
 
 	if (cb != NULL) {
 		cb();

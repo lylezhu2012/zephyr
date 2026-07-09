@@ -912,6 +912,26 @@ static void read_buffer_size_complete(struct net_buf *buf)
 	}
 }
 
+static int write_sync_flow_control_enable(uint8_t sync_flow_enable)
+{
+	struct net_buf *buf;
+	struct bt_hci_cp_write_sync_flow_enable *cp;
+
+	/* Do nothing if command not supported by the controller */
+	if (!BT_CMD_TEST(bt_dev.supported_commands, 10, 4)) {
+		return 0;
+	}
+
+	buf = bt_hci_cmd_alloc(K_FOREVER);
+	if (buf == NULL) {
+		return -ENOBUFS;
+	}
+
+	cp = net_buf_add(buf, sizeof(*cp));
+	cp->sync_flow_enable = sync_flow_enable;
+	return bt_hci_cmd_send_sync(BT_HCI_OP_WRITE_SYNC_FLOW_ENABLE, buf, NULL);
+}
+
 int bt_br_init(void)
 {
 	struct net_buf *buf;
@@ -1050,6 +1070,13 @@ int bt_br_init(void)
 
 		err = bt_hci_cmd_send_sync(BT_HCI_OP_WRITE_DEFAULT_LINK_POLICY_SETTINGS, buf, NULL);
 		if (err) {
+			return err;
+		}
+	}
+
+	if (IS_ENABLED(CONFIG_BT_VOICE_OVER_HCI)) {
+		err = write_sync_flow_control_enable(BT_HCI_SYNC_FLOW_ENABLE);
+		if (err != 0) {
 			return err;
 		}
 	}

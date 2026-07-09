@@ -917,6 +917,18 @@ struct bt_hci_cp_le_subrate_request {
 	uint16_t supervision_timeout;
 } __packed;
 
+/** Synchronous Flow Control is disabled. */
+#define BT_HCI_SYNC_FLOW_DISABLE                0x00
+/** Synchronous Flow Control is enabled. */
+#define BT_HCI_SYNC_FLOW_ENABLE                 0x01
+/** HCI opcode for Write Synchronous Flow Control Enable. */
+#define BT_HCI_OP_WRITE_SYNC_FLOW_ENABLE        BT_OP(BT_OGF_BASEBAND, 0x002f) /* 0x0c2f */
+/** HCI command parameters for Write Synchronous Flow Control Enable. */
+struct bt_hci_cp_write_sync_flow_enable {
+	/** Synchronous Flow Control Enable */
+	uint8_t  sync_flow_enable;
+} __packed;
+
 #define BT_HCI_CTL_TO_HOST_FLOW_DISABLE         0x00
 #define BT_HCI_CTL_TO_HOST_FLOW_ENABLE          0x01
 #define BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_OFF  BT_HCI_CTL_TO_HOST_FLOW_ENABLE

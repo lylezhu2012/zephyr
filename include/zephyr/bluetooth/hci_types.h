@@ -49,6 +49,17 @@ extern "C" {
 #define BT_HCI_SYNC_HANDLE_INVALID      0xffff
 #define BT_HCI_PAWR_SUBEVENT_MAX        128
 
+/* SCO Packet Status Flag values */
+#define BT_HCI_SCO_CORRECTLY_RECEIVED   0x00  /* Good data */
+#define BT_HCI_SCO_POSSIBLY_INVALID     0x01  /* Possible errors */
+#define BT_HCI_SCO_NO_DATA_RECEIVED     0x02  /* Lost data */
+#define BT_HCI_SCO_DATA_PARTIALLY_LOST  0x03  /* Partially lost */
+
+#define bt_sco_handle(h)                ((h) & 0x0fff)
+#define bt_sco_flag(h)                  (((h) >> 12) & 0x0003)
+#define bt_sco_flag_ps(h)               bt_sco_flag(h)
+#define bt_sco_handle_pack(h, ps)       ((h) | (ps << 12))
+
 /* Bluetooth spec v5.4 Vol 4, Part E - 5.4.3 HCI Synchronous Data Packets */
 struct bt_hci_sco_hdr {
 	uint16_t handle; /* 12 bit handle, 2 bit Packet Status Flag, 1 bit RFU */

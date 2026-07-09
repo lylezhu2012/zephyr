@@ -881,6 +881,18 @@ void device_supported_pkt_type(void)
 	}
 }
 
+static void read_sco_buffer_size_complete(struct bt_hci_rp_read_buffer_size *rp)
+{
+	uint16_t sco_pkts;
+
+	bt_dev.br.sco_mtu = rp->sco_max_len;
+	sco_pkts = sys_le16_to_cpu(rp->sco_max_num);
+
+	LOG_DBG("ACL BR/EDR buffers: pkts %u mtu %u", sco_pkts, bt_dev.br.sco_mtu);
+
+	k_sem_init(&bt_dev.br.sco_pkts, sco_pkts, sco_pkts);
+}
+
 static void read_buffer_size_complete(struct net_buf *buf)
 {
 	struct bt_hci_rp_read_buffer_size *rp = (void *)buf->data;
@@ -894,6 +906,10 @@ static void read_buffer_size_complete(struct net_buf *buf)
 	LOG_DBG("ACL BR/EDR buffers: pkts %u mtu %u", pkts, bt_dev.br.mtu);
 
 	k_sem_init(&bt_dev.br.pkts, pkts, pkts);
+
+	if (IS_ENABLED(CONFIG_BT_VOICE_OVER_HCI)) {
+		read_sco_buffer_size_complete(rp);
+	}
 }
 
 int bt_br_init(void)

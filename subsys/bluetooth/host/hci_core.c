@@ -298,7 +298,7 @@ void bt_hci_host_num_completed_packets(struct net_buf *buf)
 	uint16_t handle = acl(buf)->handle;
 	struct bt_hci_handle_count *hc;
 	struct bt_conn *conn;
-	uint8_t index = acl(buf)->index;
+	enum bt_conn_type type = BT_CONN_TYPE_LE;
 
 	if (IS_ENABLED(CONFIG_BT_TESTING)) {
 		bt_testing_trace_event_acl_pool_destroy(buf);
@@ -311,9 +311,17 @@ void bt_hci_host_num_completed_packets(struct net_buf *buf)
 		return;
 	}
 
-	conn = bt_conn_lookup_index(index);
-	if (!conn) {
-		LOG_WRN("Unable to look up conn with index 0x%02x", index);
+	if (IS_ENABLED(CONFIG_BT_CLASSIC)) {
+		type |= BT_CONN_TYPE_BR;
+	}
+
+	if (IS_ENABLED(CONFIG_BT_VOICE_OVER_HCI)) {
+		type |= BT_CONN_TYPE_SCO;
+	}
+
+	conn = bt_conn_lookup_handle(handle, type);
+	if (conn == NULL) {
+		LOG_WRN("Unable to look up conn with handle 0x%02x", handle);
 		return;
 	}
 
@@ -2124,6 +2132,7 @@ static int set_flow_control(void)
 	struct bt_hci_cp_host_buffer_size *hbs;
 	struct net_buf *buf;
 	int err;
+	uint8_t flow_control = BT_HCI_CTL_TO_HOST_FLOW_ENABLE;
 
 	/* Check if host flow control is actually supported */
 	if (!BT_CMD_TEST(bt_dev.supported_commands, 10, 5)) {
@@ -2143,6 +2152,7 @@ static int set_flow_control(void)
 	if (IS_ENABLED(CONFIG_BT_VOICE_OVER_HCI)) {
 		hbs->sco_mtu = CONFIG_BT_SCO_RX_BUF_SIZE;
 		hbs->sco_pkts = sys_cpu_to_le16(CONFIG_BT_SCO_RX_BUF_COUNT);
+		flow_control = BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_ON;
 	}
 
 	err = bt_hci_cmd_send_sync(BT_HCI_OP_HOST_BUFFER_SIZE, buf, NULL);
@@ -2155,7 +2165,7 @@ static int set_flow_control(void)
 		return -ENOBUFS;
 	}
 
-	net_buf_add_u8(buf, BT_HCI_CTL_TO_HOST_FLOW_ENABLE);
+	net_buf_add_u8(buf, flow_control);
 	return bt_hci_cmd_send_sync(BT_HCI_OP_SET_CTL_TO_HOST_FLOW, buf, NULL);
 }
 #endif /* CONFIG_BT_HCI_ACL_FLOW_CONTROL */

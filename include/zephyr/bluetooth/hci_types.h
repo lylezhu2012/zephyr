@@ -919,6 +919,9 @@ struct bt_hci_cp_le_subrate_request {
 
 #define BT_HCI_CTL_TO_HOST_FLOW_DISABLE         0x00
 #define BT_HCI_CTL_TO_HOST_FLOW_ENABLE          0x01
+#define BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_OFF  BT_HCI_CTL_TO_HOST_FLOW_ENABLE
+#define BT_HCI_CTL_TO_HOST_FLOW_ACL_OFF_SCO_ON  0x02
+#define BT_HCI_CTL_TO_HOST_FLOW_ACL_ON_SCO_ON   0x03
 #define BT_HCI_OP_SET_CTL_TO_HOST_FLOW          BT_OP(BT_OGF_BASEBAND, 0x0031) /* 0x0c31 */
 struct bt_hci_cp_set_ctl_to_host_flow {
 	uint8_t  flow_enable;

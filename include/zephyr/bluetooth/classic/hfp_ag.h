@@ -689,6 +689,11 @@ int bt_hfp_ag_remote_terminate(struct bt_hfp_ag_call *call);
  *
  *  Connects the two calls and disconnects the subscriber from
  *  both calls (Explicit Call Transfer).
+ *  This implementation transfers the calls only if all calls are active,
+ *  e.g. after a held call has been retrieved with bt_hfp_ag_retrieve().
+ *  Otherwise the error `-ENOTSUP` will be returned. In the same case,
+ *  AT+CHLD=4 sent by the HF is answered with ERROR, or with
+ *  +CME ERROR: 3 if the HF has enabled extended error result codes.
  *  If @kconfig{CONFIG_BT_HFP_AG_3WAY_CALL} is not enabled, the error
  *  `-ENOTSUP` will be returned if the function called.
  *

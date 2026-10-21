@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - bluetooth
+  platform_allow:
+    - native_sim
+  harness: ztest
+  sidecar: bumble
+tests:
+  bluetooth.classic.sim.rfcomm.basic:
+    timeout: 300
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=rfcomm_client::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=rfcomm_server::*

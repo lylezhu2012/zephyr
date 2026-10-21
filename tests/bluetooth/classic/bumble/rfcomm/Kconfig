@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+config TEST_RFCOMM_CHANNEL_A
+	int "First RFCOMM server channel registered by the server role"
+	default 10
+	range 6 30
+	help
+	  RFCOMM server channel registered by the server role and used by the
+	  client role for the primary DLC. Both roles are built from the same
+	  image, so the value is known to both without an SDP query.
+
+config TEST_RFCOMM_CHANNEL_B
+	int "Second RFCOMM server channel registered by the server role"
+	default 11
+	range 6 30
+	help
+	  RFCOMM server channel used for the second DLC of the multiple DLC
+	  scenario.
+
+config TEST_RFCOMM_CHANNEL_CLIENT
+	int "RFCOMM server channel registered by the client role"
+	default 12
+	range 6 30
+	help
+	  RFCOMM server channel registered by the client role. The server role
+	  connects a DLC to it over the RFCOMM session that the client created.
+
+config TEST_RFCOMM_CHANNEL_UNREGISTERED
+	int "RFCOMM server channel that is never registered"
+	default 20
+	range 6 30
+	help
+	  RFCOMM server channel that no role registers. A DLC connection to it
+	  is expected to fail.
+
+config TEST_RFCOMM_TX_POOL_COUNT
+	int "Number of RFCOMM TX buffers"
+	default 20
+	range 1 255
+	help
+	  Number of buffers in the RFCOMM TX data pool of each role.
+
+config TEST_RFCOMM_FRAME_COUNT
+	int "Number of frames sent per direction in the MTU and credit scenario"
+	default 16
+	range 1 255
+	help
+	  Number of UIH frames sent in each direction in the MTU and credit
+	  scenario. It should exceed the initial credit count so that credits
+	  have to be replenished during the transfer.
+
+module = TEST_CLASSIC_RFCOMM_SIM
+module-str = test_classic_rfcomm_sim
+source "subsys/logging/Kconfig.template.log_config"
+
+module = TEST_BR
+module-str = test_br
+source "subsys/logging/Kconfig.template.log_config"

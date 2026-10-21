@@ -3208,8 +3208,8 @@ static int query_btrh_resp(struct at_client *hf_at, struct net_buf *buf)
 	err = at_parse_cmd_input(hf_at, buf, "BTRH", query_btrh_handle,
 				 AT_CMD_TYPE_NORMAL);
 	if (err < 0) {
-		LOG_ERR("Error parsing CMD input");
-		hf_slc_error(hf_at);
+		LOG_WRN("Failed to handle +BTRH (err %d)", err);
+		return err;
 	}
 
 	return 0;

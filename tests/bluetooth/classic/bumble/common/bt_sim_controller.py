@@ -110,6 +110,30 @@ class BtSimConnection(Connection):
     key_size: int = 0
 
 
+@dataclass
+class BtSimScoLink(ScoLink):
+    """Simulated SCO/eSCO link state.
+
+    `established` is False while the link is being set up (handle not yet assigned).
+    """
+
+    air_mode: int = hci.HCI_Synchronous_Connection_Complete_Event.AirMode.CVSD
+    initiator: bool = False
+    established: bool = False
+
+
+# Air Coding Format (Voice_Setting bits 0-1) to Air_Mode (HCI and LMP)
+VOICE_SETTING_AIR_MODE = {
+    0x00: hci.HCI_Synchronous_Connection_Complete_Event.AirMode.CVSD,
+    0x01: hci.HCI_Synchronous_Connection_Complete_Event.AirMode.U_LAW_LOG,
+    0x02: hci.HCI_Synchronous_Connection_Complete_Event.AirMode.A_LAW_LOG_AIR_MORE,
+    0x03: hci.HCI_Synchronous_Connection_Complete_Event.AirMode.TRANSPARENT_DATA,
+}
+
+# EV3, EV4 and EV5 bits of the HCI Packet_Type parameter
+ESCO_PACKET_TYPES = 0x0038
+
+
 class bt_sim_controller(controller):
     def _find_classic_connection(self, key: int | hci.Address) -> BtSimConnection | None:
         """Lookup an ACL BR/EDR connection.
@@ -156,9 +180,9 @@ class bt_sim_controller(controller):
         return None
 
     # Enable BR/EDR feature
-    lmp_features: bytes = bytes.fromhex(
-        '0000000040000000'
-    )  # BR/EDR Supported, LE Supported (Controller)
+    # Byte 1: SCO link, HV2, HV3; byte 2: CVSD, transparent synchronous data;
+    # byte 3: extended SCO link (EV3); byte 4: LE Supported (Controller)
+    lmp_features: bytes = bytes.fromhex('0038098040000000')
 
     inquiry_mode: int = 0
     page_timeout: int = 0x2000
@@ -407,6 +431,279 @@ class bt_sim_controller(controller):
                 link_type=link_type,
             )
         )
+
+    def on_classic_connection_complete(self, peer_address: hci.Address, status: int) -> None:
+        super().on_classic_connection_complete(peer_address, status)
+        if status != hci.HCI_SUCCESS:
+            # Drop the entry created by Create Connection or the connection request
+            self.classic_connections.pop(peer_address, None)
+
+    def on_classic_disconnected(self, peer_address: hci.Address, reason: int) -> None:
+        # A synchronous link cannot outlive its ACL link, release it first.
+        self._release_sco_link(peer_address, reason)
+        super().on_classic_disconnected(peer_address, reason)
+
+    def on_lmp_packet(self, sender_address: hci.Address, packet: lmp.Packet):
+        if isinstance(packet, lmp.LmpEscoLinkReq):
+            self._on_sco_link_req(
+                sender_address, hci.HCI_Connection_Complete_Event.LinkType.ESCO, packet.air_mode
+            )
+        elif isinstance(packet, lmp.LmpScoLinkReq):
+            self._on_sco_link_req(
+                sender_address, hci.HCI_Connection_Complete_Event.LinkType.SCO, packet.air_mode
+            )
+        else:
+            super().on_lmp_packet(sender_address, packet)
+
+    def _send_sco_link_rsp(
+        self, peer_address: hci.Address, link_type: int, status: int = hci.HCI_SUCCESS
+    ) -> None:
+        if link_type == hci.HCI_Connection_Complete_Event.LinkType.ESCO:
+            if status == hci.HCI_SUCCESS:
+                packet = lmp.LmpAcceptedExt(lmp.Opcode.LMP_ESCO_LINK_REQ)
+            else:
+                packet = lmp.LmpNotAcceptedExt(lmp.Opcode.LMP_ESCO_LINK_REQ, status)
+        else:
+            if status == hci.HCI_SUCCESS:
+                packet = lmp.LmpAccepted(lmp.Opcode.LMP_SCO_LINK_REQ)
+            else:
+                packet = lmp.LmpNotAccepted(lmp.Opcode.LMP_SCO_LINK_REQ, status)
+
+        self.link.send_lmp_packet(self, peer_address, packet)
+
+    def _on_sco_link_req(self, peer_address: hci.Address, link_type: int, air_mode: int) -> None:
+        if self._find_classic_connection(peer_address) is None or peer_address in self.sco_links:
+            self._send_sco_link_rsp(peer_address, link_type, hci.HCI_COMMAND_DISALLOWED_ERROR)
+            return
+
+        self.sco_links[peer_address] = BtSimScoLink(
+            handle=0,
+            link_type=link_type,
+            peer_address=peer_address,
+            air_mode=air_mode,
+            initiator=False,
+        )
+
+        peer = self.link.find_classic_controller(peer_address)
+        self.send_hci_packet(
+            hci.HCI_Connection_Request_Event(
+                bd_addr=peer_address,
+                class_of_device=peer.class_of_device if peer is not None else 0,
+                link_type=link_type,
+            )
+        )
+
+    def _complete_sco_link(self, peer_address: hci.Address, status: int) -> None:
+        sco_link = self.sco_links.get(peer_address)
+        if not isinstance(sco_link, BtSimScoLink) or sco_link.established:
+            return
+
+        esco = sco_link.link_type == hci.HCI_Connection_Complete_Event.LinkType.ESCO
+        if status == hci.HCI_SUCCESS:
+            sco_link.handle = self.allocate_connection_handle()
+            sco_link.established = True
+            handle = sco_link.handle
+            logger.debug("[%s] SCO link 0x%04X to %s", self.name, handle, peer_address)
+        else:
+            self.sco_links.pop(peer_address, None)
+            handle = 0
+
+        self.send_hci_packet(
+            hci.HCI_Synchronous_Connection_Complete_Event(
+                status=status,
+                connection_handle=handle,
+                bd_addr=peer_address,
+                link_type=sco_link.link_type,
+                transmission_interval=0x06 if status == hci.HCI_SUCCESS else 0,
+                retransmission_window=0x02 if esco and status == hci.HCI_SUCCESS else 0,
+                rx_packet_length=60 if status == hci.HCI_SUCCESS else 0,
+                tx_packet_length=60 if status == hci.HCI_SUCCESS else 0,
+                air_mode=sco_link.air_mode,
+            )
+        )
+
+    def _release_sco_link(self, peer_address: hci.Address, reason: int) -> None:
+        sco_link = self.sco_links.get(peer_address)
+        if not isinstance(sco_link, BtSimScoLink):
+            return
+
+        if sco_link.established:
+            self.on_classic_sco_disconnected(peer_address, reason)
+            return
+
+        # Setup is still in progress: abort the LMP transaction and fail the setup
+        pending = self.classic_pending_commands.get(peer_address, {})
+        for opcode in (lmp.Opcode.LMP_ESCO_LINK_REQ, lmp.Opcode.LMP_SCO_LINK_REQ):
+            future = pending.pop(opcode, None)
+            if future is not None and not future.done():
+                future.cancel()
+        self._complete_sco_link(peer_address, reason)
+
+    def on_hci_setup_synchronous_connection_command(
+        self, command: sim_hci.HCI_Setup_Synchronous_Connection_Command
+    ) -> bytes | None:
+        '''
+        See Bluetooth spec Vol 4, Part E - 7.1.26 Setup Synchronous Connection command
+        '''
+        if self.link is None:
+            return None
+
+        connect = self._find_classic_connection(command.connection_handle)
+
+        if connect is None:
+            status = hci.HCI_UNKNOWN_CONNECTION_IDENTIFIER_ERROR
+        elif connect.peer_address in self.sco_links:
+            status = hci.HCI_COMMAND_DISALLOWED_ERROR
+        else:
+            status = hci.HCI_SUCCESS
+
+        self.send_hci_packet(
+            hci.HCI_Command_Status_Event(
+                status=status,
+                num_hci_command_packets=1,
+                command_opcode=command.op_code,
+            )
+        )
+
+        if status != hci.HCI_SUCCESS:
+            return None
+
+        peer_address = connect.peer_address
+        air_mode = VOICE_SETTING_AIR_MODE[command.voice_setting & 0x03]
+        if command.packet_type & ESCO_PACKET_TYPES:
+            link_type = hci.HCI_Connection_Complete_Event.LinkType.ESCO
+            packet = lmp.LmpEscoLinkReq(
+                esco_handle=0,
+                esco_lt_addr=0,
+                timing_control_flags=0,
+                d_esco=0,
+                t_esco=0x06,
+                w_esco=0x02,
+                esco_packet_type_c_to_p=0,
+                esco_packet_type_p_to_c=0,
+                packet_length_c_to_p=60,
+                packet_length_p_to_c=60,
+                air_mode=air_mode,
+                negotiation_state=0,
+            )
+        else:
+            link_type = hci.HCI_Connection_Complete_Event.LinkType.SCO
+            packet = lmp.LmpScoLinkReq(
+                sco_handle=0,
+                timing_control_flags=0,
+                d_sco=0,
+                t_sco=0x06,
+                sco_packet=0,
+                air_mode=air_mode,
+            )
+
+        self.sco_links[peer_address] = BtSimScoLink(
+            handle=0,
+            link_type=link_type,
+            peer_address=peer_address,
+            air_mode=air_mode,
+            initiator=True,
+        )
+
+        future = self.send_lmp_packet(peer_address, packet)
+
+        def on_response(future: asyncio.Future[int]):
+            if future.cancelled():
+                return
+            self._complete_sco_link(peer_address, future.result())
+
+        future.add_done_callback(on_response)
+        return None
+
+    def on_hci_accept_synchronous_connection_request_command(
+        self, command: sim_hci.HCI_Accept_Synchronous_Connection_Request_Command
+    ) -> bytes | None:
+        '''
+        See Bluetooth spec Vol 4, Part E - 7.1.27 Accept Synchronous Connection Request command
+        '''
+        if self.link is None:
+            return None
+
+        sco_link = self.sco_links.get(command.bd_addr)
+
+        if not isinstance(sco_link, BtSimScoLink) or sco_link.initiator or sco_link.established:
+            status = hci.HCI_UNKNOWN_CONNECTION_IDENTIFIER_ERROR
+        else:
+            status = hci.HCI_SUCCESS
+
+        self.send_hci_packet(
+            hci.HCI_Command_Status_Event(
+                status=status,
+                num_hci_command_packets=1,
+                command_opcode=command.op_code,
+            )
+        )
+
+        if status != hci.HCI_SUCCESS:
+            return None
+
+        air_mode = VOICE_SETTING_AIR_MODE[command.voice_setting & 0x03]
+        if air_mode != sco_link.air_mode:
+            # Both sides report the air mode requested by the initiator
+            logger.warning(
+                "[%s] SCO air mode mismatch with %s: initiator %d, acceptor %d",
+                self.name,
+                command.bd_addr,
+                sco_link.air_mode,
+                air_mode,
+            )
+
+        self._send_sco_link_rsp(command.bd_addr, sco_link.link_type)
+        self._complete_sco_link(command.bd_addr, hci.HCI_SUCCESS)
+        return None
+
+    def on_hci_reject_connection_request_command(
+        self, command: hci.HCI_Reject_Connection_Request_Command
+    ) -> bytes | None:
+        '''
+        See Bluetooth spec Vol 4, Part E - 7.1.9 Reject Connection Request command
+        '''
+        if self.link is None:
+            return None
+
+        sco_link = self.sco_links.get(command.bd_addr)
+        connect = self.classic_connections.get(command.bd_addr)
+
+        if (
+            isinstance(sco_link, BtSimScoLink)
+            and not sco_link.initiator
+            and not sco_link.established
+        ):
+            status = hci.HCI_SUCCESS
+        elif connect is not None and connect.handle == 0 and connect.role == hci.Role.PERIPHERAL:
+            sco_link = None
+            status = hci.HCI_SUCCESS
+        else:
+            sco_link = None
+            status = hci.HCI_UNKNOWN_CONNECTION_IDENTIFIER_ERROR
+
+        self.send_hci_packet(
+            hci.HCI_Command_Status_Event(
+                status=status,
+                num_hci_command_packets=1,
+                command_opcode=command.op_code,
+            )
+        )
+
+        if status != hci.HCI_SUCCESS:
+            return None
+
+        if sco_link is not None:
+            self._send_sco_link_rsp(command.bd_addr, sco_link.link_type, command.reason)
+            self._complete_sco_link(command.bd_addr, command.reason)
+        else:
+            self.link.send_lmp_packet(
+                self,
+                command.bd_addr,
+                lmp.LmpNotAccepted(lmp.Opcode.LMP_HOST_CONNECTION_REQ, command.reason),
+            )
+            self.on_classic_connection_complete(command.bd_addr, command.reason)
+        return None
 
     def on_read_remote_supported_features_pdu(
         self, lmp_features: bytes, connection_handle: int

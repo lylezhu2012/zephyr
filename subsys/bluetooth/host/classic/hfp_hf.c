@@ -2678,8 +2678,6 @@ int bt_hfp_hf_request_phone_number(struct bt_hfp_hf *hf)
 		return 0;
 	}
 
-	atomic_clear_bit(hf->flags, BT_HFP_HF_FLAG_BINP);
-
 	err = hfp_hf_send_cmd(hf, binp_resp, binp_finish, "AT+BINP=1");
 	if (err < 0) {
 		LOG_ERR("Fail to request phone number to the AG on %p", hf);

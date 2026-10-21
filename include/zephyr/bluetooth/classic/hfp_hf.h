@@ -786,11 +786,15 @@ int bt_hfp_hf_select_codec(struct bt_hfp_hf *hf, uint8_t codec_id);
  *
  *  Set supported codec ids by sending AT+BAC. This function is used
  *  to notify AG the supported Codec IDs of HF.
+ *  The CVSD codec is mandatory, so @p codec_ids shall include
+ *  `BIT(BT_HFP_HF_CODEC_CVSD)`, otherwise the error `-EINVAL` will be
+ *  returned.
  *  If @kconfig{CONFIG_BT_HFP_HF_CODEC_NEG} is not enabled, the error
  *  `-ENOTSUP` will be returned if the function called.
  *
  *  @param hf HFP HF object.
- *  @param codec_ids Supported codec IDs.
+ *  @param codec_ids Bitmap of the supported codec IDs, `BIT(id)` for each
+ *         supported BT_HFP_HF_CODEC_XXX codec id.
  *
  *  @return 0 in case of success or negative value in case of error.
  */

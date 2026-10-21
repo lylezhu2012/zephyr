@@ -357,6 +357,13 @@ static int at_state_process_result(struct at_client *at, struct net_buf *buf)
 	}
 
 	if (at_parse_result(at, buf, &result) == 0) {
+		/*
+		 * The command is completed. Release its response handler before calling the
+		 * finish callback, after which the next command may be sent and register its
+		 * own response handler.
+		 */
+		at->resp = NULL;
+
 		if (at->finish) {
 			/* cme_err is 0 - Is invalid until result is
 			 * AT_RESULT_CME_ERROR
@@ -383,6 +390,9 @@ int cme_handle(struct at_client *at)
 	} else {
 		cme_err = CME_ERROR_UNKNOWN;
 	}
+
+	/* The command is completed, see at_state_process_result(). */
+	at->resp = NULL;
 
 	if (at->finish) {
 		at->finish(at, AT_RESULT_CME_ERROR, cme_err);

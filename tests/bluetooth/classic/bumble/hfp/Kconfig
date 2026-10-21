@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+module = TEST_CLASSIC_HFP_SIM
+module-str = test_classic_hfp_sim
+source "subsys/logging/Kconfig.template.log_config"
+
+module = TEST_BR
+module-str = test_br
+source "subsys/logging/Kconfig.template.log_config"

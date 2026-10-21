@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+if BT_DID
+
+# Values of the Device ID record of the DID module, checked by the client role on the peer.
+# The DID module sets VendorIDSource to 0x0001 (Bluetooth SIG), so VendorID is a Bluetooth SIG
+# Company Identifier: 0x0025 is NXP B.V.
+configdefault BT_DEVICE_VENDOR_ID
+	default 0x0025
+
+configdefault BT_DEVICE_PRODUCT_ID
+	default 0xa5c3
+
+configdefault BT_DEVICE_VERSION
+	default 0x0207
+
+endif # BT_DID
+
+source "Kconfig.zephyr"
+
+module = TEST_CLASSIC_DID_SIM
+module-str = test_classic_did_sim
+source "subsys/logging/Kconfig.template.log_config"
+
+module = TEST_BR
+module-str = test_br
+source "subsys/logging/Kconfig.template.log_config"

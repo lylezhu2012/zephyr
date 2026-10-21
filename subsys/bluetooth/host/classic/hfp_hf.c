@@ -3674,7 +3674,7 @@ int bt_hfp_hf_set_codecs(struct bt_hfp_hf *hf, uint8_t codec_ids)
 		return -ENOTCONN;
 	}
 
-	if (codec_ids & BT_HFP_HF_CODEC_CVSD) {
+	if (!(codec_ids & BT_HFP_HF_CODEC_CVSD_MASK)) {
 		LOG_ERR("CVSD should be supported");
 		return -EINVAL;
 	}

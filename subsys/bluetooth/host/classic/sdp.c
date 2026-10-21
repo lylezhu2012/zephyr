@@ -2836,12 +2836,19 @@ static int sdp_client_receive_ssa_sa(struct bt_sdp_client *session, struct net_b
 	}
 
 	/*
-	 * No record found for given UUID. The check catches case when
-	 * current response frame has Continuation State shortest and
+	 * No record found for given UUID, or no requested attribute found in
+	 * the record of a Service Attribute request. The check catches case
+	 * when current response frame has Continuation State shortest and
 	 * valid and this is the first response frame as well.
 	 */
 	if (frame_len == 2U && cstate->length == 0U && session->cstate.length == 0U) {
-		LOG_WRN("Record for UUID 0x%s not found", bt_uuid_str(session->param->uuid));
+		if (session->param->type == BT_SDP_DISCOVER_SERVICE_ATTR) {
+			/* The parameters hold a record handle, not a UUID */
+			LOG_WRN("No attribute found in record 0x%08x", session->param->handle);
+		} else {
+			LOG_WRN("Record for UUID 0x%s not found",
+				bt_uuid_str(session->param->uuid));
+		}
 		return -EINVAL;
 	}
 
@@ -2909,7 +2916,11 @@ static int sdp_client_receive_ssa_sa(struct bt_sdp_client *session, struct net_b
 
 	net_buf_pull(buf, sizeof(cstate->length));
 
-	LOG_DBG("UUID 0x%s resolved", bt_uuid_str(session->param->uuid));
+	if (session->param->type == BT_SDP_DISCOVER_SERVICE_ATTR) {
+		LOG_DBG("Record 0x%08x resolved", session->param->handle);
+	} else {
+		LOG_DBG("UUID 0x%s resolved", bt_uuid_str(session->param->uuid));
+	}
 	sdp_client_notify_result(session->chan.chan.conn, session, UUID_RESOLVED);
 	/* Get next UUID and start resolving it */
 	sdp_client_params_iterator(session);

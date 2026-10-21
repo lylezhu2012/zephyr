@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - bluetooth
+  platform_allow:
+    - native_sim
+  harness: ztest
+  sidecar: bumble
+tests:
+  bluetooth.classic.sim.hfp.slc:
+    timeout: 600
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=hfp_ag_slc::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=hfp_hf_slc::*
+  bluetooth.classic.sim.hfp.audio:
+    timeout: 600
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=hfp_ag_audio::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=hfp_hf_audio::*
+  bluetooth.classic.sim.hfp.call:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=hfp_ag_call::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=hfp_hf_call::*
+  bluetooth.classic.sim.hfp.multicall:
+    timeout: 600
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=hfp_ag_multicall::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=hfp_hf_multicall::*

@@ -1484,6 +1484,16 @@ static void avdtp_abort_cmd(struct bt_avdtp *session, struct net_buf *buf, uint8
 	uint8_t avdtp_err_code = 0;
 
 	sep = avdtp_get_cmd_sep(buf, &avdtp_err_code, NULL);
+
+	/*
+	 * AVDTP v1.3, 8.16.2: "If an AVDTP_ABORT_CMD contains an invalid SEID, no response shall
+	 * be sent." A command without SEID is still rejected (Zephyr choice).
+	 */
+	if ((sep == NULL) && (avdtp_err_code != BT_AVDTP_BAD_LENGTH)) {
+		LOG_DBG("Abort of an invalid SEID, no response");
+		return;
+	}
+
 	avdtp_sep_lock(sep);
 
 	if (sep == NULL) {

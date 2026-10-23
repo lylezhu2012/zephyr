@@ -1177,6 +1177,11 @@ static int bt_a2dp_stream_ctrl_pre(struct bt_a2dp_stream *stream, bt_avdtp_func_
 		return -EINVAL;
 	}
 
+	/* The stream has been released: its endpoint is free or used by another stream. */
+	if (stream->local_ep->stream != stream) {
+		return -EINVAL;
+	}
+
 	a2dp = stream->a2dp;
 	if (bt_a2dp_req_check_busy(&a2dp->ctrl_param.req)) {
 		return -EBUSY;
@@ -1300,6 +1305,11 @@ int bt_a2dp_stream_reconfig(struct bt_a2dp_stream *stream, struct bt_a2dp_codec_
 		return -EINVAL;
 	}
 
+	/* The stream has been released: its endpoint is free or used by another stream. */
+	if (stream->local_ep->stream != stream) {
+		return -EINVAL;
+	}
+
 	if (bt_a2dp_req_check_busy(&stream->a2dp->set_config_param.req)) {
 		return -EBUSY;
 	}
@@ -1342,6 +1352,11 @@ uint32_t bt_a2dp_get_mtu(struct bt_a2dp_stream *stream)
 		return 0;
 	}
 
+	/* The stream has been released: its endpoint is free or used by another stream. */
+	if (stream->local_ep->stream != stream) {
+		return 0;
+	}
+
 	return bt_avdtp_get_media_mtu(&stream->local_ep->sep);
 }
 
@@ -1375,6 +1390,11 @@ int bt_a2dp_stream_send(struct bt_a2dp_stream *stream, struct net_buf *buf, uint
 		return -EINVAL;
 	}
 
+	/* The stream has been released: its endpoint is free or used by another stream. */
+	if (stream->local_ep->stream != stream) {
+		return -EINVAL;
+	}
+
 	media_hdr = (struct bt_avdtp_media_hdr *)buf->data;
 	memset(media_hdr, 0, sizeof(struct bt_avdtp_media_hdr));
 
@@ -1404,6 +1424,11 @@ int bt_a2dp_stream_delay_report(struct bt_a2dp_stream *stream, uint16_t delay)
 	}
 
 	if (stream->local_ep == NULL || stream->a2dp == NULL) {
+		return -EINVAL;
+	}
+
+	/* The stream has been released: its endpoint is free or used by another stream. */
+	if (stream->local_ep->stream != stream) {
 		return -EINVAL;
 	}
 

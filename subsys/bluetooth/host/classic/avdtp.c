@@ -1534,6 +1534,7 @@ static void avdtp_abort_cmd(struct bt_avdtp *session, struct net_buf *buf, uint8
 static void avdtp_abort_rsp(struct bt_avdtp *session, struct net_buf *buf, uint8_t msg_type)
 {
 	struct bt_avdtp_req *req = session->req;
+	struct bt_avdtp_sep *released_sep = NULL;
 
 	if (req == NULL) {
 		return;
@@ -1564,10 +1565,14 @@ static void avdtp_abort_rsp(struct bt_avdtp *session, struct net_buf *buf, uint8
 
 			avdtp_schedule_media_disconnect_work(sep, work_state);
 		} else {
-			bt_avdtp_set_state(sep, AVDTP_IDLE);
+			/*
+			 * Release the endpoint after the response is reported, as when there is a
+			 * media channel: the endpoint is aborting until then.
+			 */
+			bt_avdtp_set_state(sep, AVDTP_ABORTING);
 			avdtp_sep_unlock(sep);
 
-			avdtp_endpoint_released(sep);
+			released_sep = sep;
 		}
 	} else {
 		/* Spec only allows accept, spec doesn't define the packet format of reject. */
@@ -1578,6 +1583,11 @@ static void avdtp_abort_rsp(struct bt_avdtp *session, struct net_buf *buf, uint8
 
 	if (req->func != NULL) {
 		req->func(req, NULL);
+	}
+
+	if (released_sep != NULL) {
+		bt_avdtp_set_state_lock(released_sep, AVDTP_IDLE);
+		avdtp_endpoint_released(released_sep);
 	}
 }
 

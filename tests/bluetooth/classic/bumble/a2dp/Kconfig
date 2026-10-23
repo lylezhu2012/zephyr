@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+module = TEST_CLASSIC_A2DP_SIM
+module-str = test_classic_a2dp_sim
+source "subsys/logging/Kconfig.template.log_config"
+
+module = TEST_BR
+module-str = test_br
+source "subsys/logging/Kconfig.template.log_config"
+
+config TEST_A2DP_INT_SINK
+	bool "The initiator of the signaling tests uses the sink endpoint"
+	default y
+	help
+	  The initiator (device 0) creates the A2DP connection and sends the AVDTP commands of
+	  the signaling tests. If enabled, it uses its sink endpoint and the acceptor its source
+	  endpoint, as in the board-to-board a2dp_sink tests. If disabled, the initiator uses its
+	  source endpoint and the acceptor its sink endpoint.

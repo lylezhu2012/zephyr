@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - bluetooth
+  platform_allow:
+    - native_sim
+  harness: ztest
+  sidecar: bumble
+tests:
+  bluetooth.classic.sim.a2dp.signaling_snk_int:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=a2dp_int_signaling::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=a2dp_acp_signaling::*
+  bluetooth.classic.sim.a2dp.signaling_src_int:
+    timeout: 900
+    extra_configs:
+      - CONFIG_TEST_A2DP_INT_SINK=n
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=a2dp_int_signaling::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=a2dp_acp_signaling::*
+  bluetooth.classic.sim.a2dp.robustness:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=a2dp_int_robustness::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=a2dp_acp_robustness::*
+  bluetooth.classic.sim.a2dp.stream:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=a2dp_int_stream::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=a2dp_acp_stream::*

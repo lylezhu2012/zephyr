@@ -1869,6 +1869,17 @@ static int chld_release_all(struct bt_hfp_ag *ag)
 	struct bt_hfp_ag_call *call;
 	bt_hfp_call_state_t call_state;
 
+	/*
+	 * UDUB for a waiting call. Where both a held and a waiting call exist, it applies to the
+	 * waiting call only. As for AT+CHUP, the call is rejected after the OK: the callsetup
+	 * indicator is cleared first, then the reject callback is called.
+	 */
+	call = get_call_with_flag_and_state(ag, BT_HFP_AG_CALL_INCOMING_3WAY,
+					    BT_HFP_CALL_INCOMING | BT_HFP_CALL_ALERTING);
+	if (call != NULL) {
+		return hfp_ag_next_step(ag, bt_hfp_ag_call_reject, call);
+	}
+
 	for (size_t index = 0; index < ARRAY_SIZE(ag->calls); index++) {
 		call = &ag->calls[index];
 

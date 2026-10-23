@@ -200,6 +200,7 @@ enum {
 	BT_HFP_AG_CALL_OUTGOING_3WAY, /* Outgoing 3 way call */
 	BT_HFP_AG_CALL_INCOMING_3WAY, /* Incoming 3 way call */
 	BT_HFP_AG_CALL_ALERTING,      /* Pending for alerting */
+	BT_HFP_AG_CALL_ENDING,        /* End of call indicated, release pending */
 
 	/* Total number of flags - must be at the end of the enum */
 	BT_HFP_AG_CALL_NUM_FLAGS,

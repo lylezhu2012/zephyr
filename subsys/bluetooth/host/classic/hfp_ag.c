@@ -1421,6 +1421,24 @@ static struct bt_hfp_ag_call *get_call_with_flag_and_state(struct bt_hfp_ag *ag,
 	return NULL;
 }
 
+/*
+ * The first indicator or result code that ends the call is queued, and the call is released once
+ * the last one has been sent. From now on, the call is not listed in the current calls: a +CLCC
+ * sent after them would report the call again.
+ */
+static void ag_call_ending(struct bt_hfp_ag_call *call)
+{
+	if (call != NULL) {
+		atomic_set_bit(call->flags, BT_HFP_AG_CALL_ENDING);
+	}
+}
+
+static bool ag_call_listed(struct bt_hfp_ag_call *call)
+{
+	return atomic_test_bit(call->flags, BT_HFP_AG_CALL_IN_USING) &&
+	       !atomic_test_bit(call->flags, BT_HFP_AG_CALL_ENDING);
+}
+
 static void bt_hfp_ag_reject_cb(struct bt_hfp_ag *ag, void *user_data)
 {
 	struct bt_hfp_ag_call *call = (struct bt_hfp_ag_call *)user_data;
@@ -1438,8 +1456,11 @@ static void bt_hfp_ag_reject_cb(struct bt_hfp_ag *ag, void *user_data)
 
 static void bt_hfp_ag_call_reject(struct bt_hfp_ag *ag, void *user_data)
 {
-	int err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
-					    bt_hfp_ag_reject_cb, user_data);
+	int err;
+
+	ag_call_ending(user_data);
+	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
+				      bt_hfp_ag_reject_cb, user_data);
 	if (err != 0) {
 		LOG_ERR("Fail to send err :(%d)", err);
 	}
@@ -2387,8 +2408,10 @@ static void bt_hfp_ag_terminate_cb(struct bt_hfp_ag *ag, void *user_data)
 
 static void bt_hfp_ag_unit_call_terminate(struct bt_hfp_ag *ag, void *user_data)
 {
-	int err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_IND, 0, bt_hfp_ag_terminate_cb,
-					    user_data);
+	int err;
+
+	ag_call_ending(user_data);
+	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_IND, 0, bt_hfp_ag_terminate_cb, user_data);
 	if (err != 0) {
 		LOG_ERR("Fail to send err :(%d)", err);
 	}
@@ -2401,8 +2424,11 @@ static void bt_hfp_ag_active_terminate_cb(struct bt_hfp_ag *ag, void *user_data)
 
 static void bt_hfp_ag_call_terminate(struct bt_hfp_ag *ag, void *user_data)
 {
-	int err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
-					  bt_hfp_ag_active_terminate_cb, user_data);
+	int err;
+
+	ag_call_ending(user_data);
+	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
+				      bt_hfp_ag_active_terminate_cb, user_data);
 	if (err) {
 		LOG_ERR("Fail to send err :(%d)", err);
 	}
@@ -2527,12 +2553,20 @@ static int bt_hfp_ag_clcc_handler(struct bt_hfp_ag *ag, struct net_buf *buf)
 		return -ENOTSUP;
 	}
 
-	active_calls = get_active_calls(ag);
+	active_calls = 0;
+	for (size_t index = 0; index < ARRAY_SIZE(ag->calls); index++) {
+		call = &ag->calls[index];
+
+		if (ag_call_listed(call) &&
+		    (bt_hfp_get_call_state(call) == BT_HFP_CLCC_STATUS_ACTIVE)) {
+			active_calls++;
+		}
+	}
 
 	for (size_t index = 0; index < ARRAY_SIZE(ag->calls); index++) {
 		call = &ag->calls[index];
 
-		if (!atomic_test_bit(call->flags, BT_HFP_AG_CALL_IN_USING)) {
+		if (!ag_call_listed(call)) {
 			continue;
 		}
 
@@ -3254,6 +3288,7 @@ static void btrh_reject_cb(struct bt_hfp_ag *ag, void *user_data)
 {
 	int err;
 
+	ag_call_ending(user_data);
 	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_IND, 0, bt_hfp_ag_reject_cb, user_data);
 	if (err) {
 		bt_hfp_ag_unit_call_terminate(ag, user_data);
@@ -3903,6 +3938,7 @@ static void bt_ag_deferred_work_cb(struct bt_hfp_ag *ag, void *user_data)
 				return;
 			}
 
+			ag_call_ending(call);
 			err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND,
 						      BT_HFP_CALL_SETUP_NONE,
 						      bt_hfp_ag_reject_cb, call);
@@ -3914,6 +3950,7 @@ static void bt_ag_deferred_work_cb(struct bt_hfp_ag *ag, void *user_data)
 		}
 
 		if (call_setup_ind && call_ind) {
+			ag_call_ending(call);
 			err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND,
 						      BT_HFP_CALL_SETUP_NONE, NULL, NULL);
 			if (err) {
@@ -3928,6 +3965,7 @@ static void bt_ag_deferred_work_cb(struct bt_hfp_ag *ag, void *user_data)
 				}
 			}
 		} else if (call_setup_ind) {
+			ag_call_ending(call);
 			err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND,
 						      BT_HFP_CALL_SETUP_NONE, bt_hfp_ag_reject_cb,
 						      call);
@@ -3936,6 +3974,7 @@ static void bt_ag_deferred_work_cb(struct bt_hfp_ag *ag, void *user_data)
 				bt_hfp_ag_terminate_cb(ag, call);
 			}
 		} else if (call_ind) {
+			ag_call_ending(call);
 			err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_IND, 0,
 						      bt_hfp_ag_terminate_cb, call);
 			if (err) {
@@ -4679,8 +4718,12 @@ int bt_hfp_ag_reject(struct bt_hfp_ag_call *call)
 	}
 
 	if ((call_state == BT_HFP_CALL_ALERTING) || (call_state == BT_HFP_CALL_INCOMING)) {
+		ag_call_ending(call);
 		err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
 					      bt_hfp_ag_reject_cb, call);
+		if (err != 0) {
+			atomic_clear_bit(call->flags, BT_HFP_AG_CALL_ENDING);
+		}
 
 		return err;
 	}
@@ -5000,8 +5043,12 @@ int bt_hfp_ag_remote_reject(struct bt_hfp_ag_call *call)
 		return -EINVAL;
 	}
 
+	ag_call_ending(call);
 	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE,
 				      bt_hfp_ag_reject_cb, call);
+	if (err != 0) {
+		atomic_clear_bit(call->flags, BT_HFP_AG_CALL_ENDING);
+	}
 
 	return err;
 }

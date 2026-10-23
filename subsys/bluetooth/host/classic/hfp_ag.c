@@ -657,6 +657,27 @@ static int get_held_calls(struct bt_hfp_ag *ag)
 	return count;
 }
 
+static int get_setup_calls(struct bt_hfp_ag *ag)
+{
+	struct bt_hfp_ag_call *call;
+	int count = 0;
+
+	for (size_t index = 0; index < ARRAY_SIZE(ag->calls); index++) {
+		call = &ag->calls[index];
+
+		if (atomic_test_bit(call->flags, BT_HFP_AG_CALL_IN_USING)) {
+			hfp_ag_lock(ag);
+			if (call->call_state &
+			    (BT_HFP_CALL_OUTGOING | BT_HFP_CALL_INCOMING | BT_HFP_CALL_ALERTING)) {
+				count++;
+			}
+			hfp_ag_unlock(ag);
+		}
+	}
+
+	return count;
+}
+
 static void ag_notify_call_held_ind(struct bt_hfp_ag *ag, void *user_data)
 {
 	int active_call_count;
@@ -677,6 +698,31 @@ static void ag_notify_call_held_ind(struct bt_hfp_ag *ag, void *user_data)
 	err = hfp_ag_force_update_indicator(ag, BT_HFP_AG_CALL_HELD_IND, value, NULL, NULL);
 	if (err) {
 		LOG_ERR("Fail to notify call_held ind :(%d)", err);
+	}
+}
+
+static void ag_clear_call_setup_ind(struct bt_hfp_ag *ag, void *user_data)
+{
+	uint8_t call_setup_ind;
+	int err;
+
+	/* Another call is still being set up. */
+	if (get_setup_calls(ag) != 0) {
+		return;
+	}
+
+	hfp_ag_lock(ag);
+	call_setup_ind = ag->indicator_value[BT_HFP_AG_CALL_SETUP_IND];
+	hfp_ag_unlock(ag);
+
+	if (call_setup_ind == BT_HFP_CALL_SETUP_NONE) {
+		return;
+	}
+
+	err = hfp_ag_update_indicator(ag, BT_HFP_AG_CALL_SETUP_IND, BT_HFP_CALL_SETUP_NONE, NULL,
+				      NULL);
+	if (err) {
+		LOG_ERR("Fail to clear call_setup ind :(%d)", err);
 	}
 }
 
@@ -709,6 +755,11 @@ static void free_call(struct bt_hfp_ag_call *call)
 	if (!call_count) {
 		clear_call_and_call_setup_ind(ag);
 	} else {
+		err = hfp_ag_next_step(ag, ag_clear_call_setup_ind, NULL);
+		if (err) {
+			LOG_ERR("Fail to clear call_setup ind :(%d)", err);
+		}
+
 		err = hfp_ag_next_step(ag, ag_notify_call_held_ind, NULL);
 		if (err) {
 			LOG_ERR("Fail to notify call_held ind :(%d)", err);

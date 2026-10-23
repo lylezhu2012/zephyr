@@ -1291,6 +1291,11 @@ int bt_a2dp_stream_reconfig(struct bt_a2dp_stream *stream, struct bt_a2dp_codec_
 		return -EINVAL;
 	}
 
+	/* The stream has not been configured. */
+	if ((stream->a2dp == NULL) || (stream->local_ep == NULL)) {
+		return -EINVAL;
+	}
+
 	if (bt_a2dp_req_check_busy(&stream->a2dp->set_config_param.req)) {
 		return -EBUSY;
 	}

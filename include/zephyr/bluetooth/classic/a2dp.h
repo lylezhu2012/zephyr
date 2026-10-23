@@ -922,7 +922,8 @@ int bt_a2dp_stream_abort(struct bt_a2dp_stream *stream);
  *
  *  @param stream The stream object.
  *
- *  @return mtu value
+ *  @return mtu value, 0 if the stream has never been configured or has been released. The value
+ *          is meaningful only once the stream is established.
  */
 uint32_t bt_a2dp_get_mtu(struct bt_a2dp_stream *stream);
 

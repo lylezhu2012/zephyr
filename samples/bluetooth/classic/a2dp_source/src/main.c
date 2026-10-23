@@ -356,12 +356,22 @@ static void audio_work_handler(struct k_work *work)
 	uint8_t *sbc_hdr;
 	uint32_t pdu_len;
 	uint32_t out_size;
+	uint32_t mtu;
 	int err;
 	uint8_t frame_num = 0;
 	uint8_t remaining_frame_num;
 
 	/* If stopped then return */
 	if (!a2dp_src_playback || default_a2dp == NULL) {
+		return;
+	}
+
+	/*
+	 * Read the MTU once, the stream may be released while this work waits for a buffer: the
+	 * frame loop below cannot end with an MTU of 0.
+	 */
+	mtu = bt_a2dp_get_mtu(&sbc_stream);
+	if (mtu == 0U) {
 		return;
 	}
 
@@ -400,8 +410,7 @@ static void audio_work_handler(struct k_work *work)
 
 		frame_num = remaining_frame_num;
 		/* adjust the buf size */
-		while ((pdu_len - buf->len > net_buf_tailroom(buf)) ||
-		       (pdu_len > bt_a2dp_get_mtu(&sbc_stream)) ||
+		while ((pdu_len - buf->len > net_buf_tailroom(buf)) || (pdu_len > mtu) ||
 		       (!a2dp_produce_media_check(a2dp_src_num_samples))) {
 			pdu_len -= encoded_frame_size;
 			a2dp_src_num_samples -= pcm_frame_samples;
@@ -491,6 +500,8 @@ static void sbc_stream_established(struct bt_a2dp_stream *stream)
 static void sbc_stream_released(struct bt_a2dp_stream *stream)
 {
 	printk("stream released\n");
+	/* Stop Audio Source, also for an audio work item already queued */
+	a2dp_src_playback = false;
 	k_timer_stop(&a2dp_player_timer);
 }
 

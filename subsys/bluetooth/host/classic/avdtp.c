@@ -1720,30 +1720,19 @@ static void avdtp_get_configuration_rsp(struct bt_avdtp *session, struct net_buf
 /* Timeout handler */
 static void avdtp_timeout(struct k_work *work)
 {
-	struct bt_avdtp_req *req = (AVDTP_KWORK(work))->req;
+	struct bt_avdtp *session = AVDTP_KWORK(work);
+	struct bt_avdtp_req *req = session->req;
 
-	/* add process code */
-	/* Gracefully Disconnect the Signalling and streaming L2cap chann*/
 	if (req) {
 		LOG_DBG("Failed Signal_id = %d", req->sig);
 
-		switch (req->sig) {
-		case BT_AVDTP_DISCOVER:
-		case BT_AVDTP_GET_CAPABILITIES:
-		case BT_AVDTP_SET_CONFIGURATION:
-		case BT_AVDTP_RECONFIGURE:
-		case BT_AVDTP_OPEN:
-		case BT_AVDTP_CLOSE:
-		case BT_AVDTP_START:
-		case BT_AVDTP_SUSPEND:
-			req->status = BT_AVDTP_TIME_OUT;
-			req->func(req, NULL);
-			break;
-		default:
-			break;
-		}
+		/* Complete any request, as a response; the callback may send the next one. */
+		req->status = BT_AVDTP_TIME_OUT;
+		bt_avdtp_clear_req(session);
 
-		AVDTP_KWORK(work)->req = NULL;
+		if (req->func != NULL) {
+			req->func(req, NULL);
+		}
 	}
 }
 

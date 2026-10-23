@@ -1425,7 +1425,8 @@ static void bt_hfp_ag_reject_cb(struct bt_hfp_ag *ag, void *user_data)
 {
 	struct bt_hfp_ag_call *call = (struct bt_hfp_ag_call *)user_data;
 
-	if (call) {
+	/* The call may have been released while the indicator was sent. */
+	if ((call != NULL) && atomic_test_bit(call->flags, BT_HFP_AG_CALL_IN_USING)) {
 		ag_reject_call(call);
 	}
 
@@ -2373,7 +2374,8 @@ static void bt_hfp_ag_terminate_cb(struct bt_hfp_ag *ag, void *user_data)
 {
 	struct bt_hfp_ag_call *call = (struct bt_hfp_ag_call *)user_data;
 
-	if (call) {
+	/* The call may have been released while the indicator was sent. */
+	if ((call != NULL) && atomic_test_bit(call->flags, BT_HFP_AG_CALL_IN_USING)) {
 		ag_terminate_call(call);
 	}
 

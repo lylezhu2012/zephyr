@@ -1194,13 +1194,14 @@ static int bt_a2dp_stream_ctrl_pre(struct bt_a2dp_stream *stream, bt_avdtp_func_
 int bt_a2dp_stream_establish(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_open_cb);
 	if (err) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_open(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);
@@ -1212,13 +1213,14 @@ int bt_a2dp_stream_establish(struct bt_a2dp_stream *stream)
 int bt_a2dp_stream_release(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_close_cb);
 	if (err) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_close(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);
@@ -1230,13 +1232,14 @@ int bt_a2dp_stream_release(struct bt_a2dp_stream *stream)
 int bt_a2dp_stream_start(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_start_cb);
 	if (err) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_start(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);
@@ -1248,13 +1251,14 @@ int bt_a2dp_stream_start(struct bt_a2dp_stream *stream)
 int bt_a2dp_stream_suspend(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_suspend_cb);
 	if (err) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_suspend(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);
@@ -1266,13 +1270,14 @@ int bt_a2dp_stream_suspend(struct bt_a2dp_stream *stream)
 int bt_a2dp_stream_abort(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_abort_cb);
 	if (err) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_abort(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);
@@ -1316,13 +1321,14 @@ int bt_a2dp_stream_reconfig(struct bt_a2dp_stream *stream, struct bt_a2dp_codec_
 int bt_a2dp_stream_get_config(struct bt_a2dp_stream *stream)
 {
 	int err;
-	struct bt_a2dp *a2dp = stream->a2dp;
+	struct bt_a2dp *a2dp;
 
 	err = bt_a2dp_stream_ctrl_pre(stream, bt_a2dp_get_config_cb);
 	if (err != 0) {
 		return err;
 	}
 
+	a2dp = stream->a2dp;
 	err = bt_avdtp_get_configuration(&a2dp->session, &a2dp->ctrl_param);
 	if (err != 0) {
 		bt_a2dp_ctrl_req_clear_busy(a2dp);

@@ -307,7 +307,6 @@ static int a2dp_process_config_ind(struct bt_avdtp *session, struct bt_avdtp_sep
 	struct bt_a2dp *a2dp = A2DP_AVDTP(session);
 	struct bt_a2dp_ep *ep;
 	struct bt_a2dp_stream *stream = NULL;
-	struct bt_a2dp_stream_ops *ops;
 	uint8_t codec_type;
 	uint8_t *codec_info_element;
 	uint16_t codec_info_element_len;
@@ -407,13 +406,7 @@ static int a2dp_process_config_ind(struct bt_avdtp *session, struct bt_avdtp_sep
 	}
 
 process_done:
-	if (*errcode == 0) {
-		ops = stream->ops;
-		if ((ops != NULL) && (ops->configured != NULL)) {
-			ops->configured(stream);
-		}
-	}
-
+	/* a2dp_configured() calls the configured callback once the configuration is answered. */
 	return (*errcode == 0) ? 0 : -EINVAL;
 }
 
@@ -458,10 +451,9 @@ static void bt_a2dp_media_data_callback(struct bt_avdtp_sep *sep, struct net_buf
 #endif
 
 typedef int (*bt_a2dp_ctrl_req_cb)(struct bt_a2dp_stream *stream, uint8_t *rsp_err_code);
-typedef void (*bt_a2dp_ctrl_done_cb)(struct bt_a2dp_stream *stream);
 
 static int a2dp_ctrl_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uint8_t *errcode,
-			 bt_a2dp_ctrl_req_cb req_cb, bt_a2dp_ctrl_done_cb done_cb)
+			 bt_a2dp_ctrl_req_cb req_cb)
 {
 	struct bt_a2dp_ep *ep;
 
@@ -482,12 +474,6 @@ static int a2dp_ctrl_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uin
 		}
 	}
 
-	if (*errcode == 0) {
-		if (done_cb != NULL) {
-			done_cb(ep->stream);
-		}
-	}
-
 	return (*errcode == 0) ? 0 : -EINVAL;
 }
 
@@ -497,32 +483,29 @@ static int a2dp_open_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uin
 
 	__ASSERT(sep, "Invalid sep");
 	req_cb = a2dp_cb != NULL ? a2dp_cb->establish_req : NULL;
-	return a2dp_ctrl_ind(session, sep, errcode, req_cb, NULL);
+	return a2dp_ctrl_ind(session, sep, errcode, req_cb);
 }
 
 static int a2dp_start_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uint8_t *errcode)
 {
-	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
 	bt_a2dp_ctrl_req_cb req_cb;
-	bt_a2dp_ctrl_done_cb done_cb;
 
 	__ASSERT(sep, "Invalid sep");
 	req_cb = a2dp_cb != NULL ? a2dp_cb->start_req : NULL;
-	done_cb = (ep->stream != NULL && ep->stream->ops != NULL) ? ep->stream->ops->started : NULL;
-	return a2dp_ctrl_ind(session, sep, errcode, req_cb, done_cb);
+
+	/* a2dp_started() calls the started callback once the stream is streaming. */
+	return a2dp_ctrl_ind(session, sep, errcode, req_cb);
 }
 
 static int a2dp_suspend_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uint8_t *errcode)
 {
-	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
 	bt_a2dp_ctrl_req_cb req_cb;
-	bt_a2dp_ctrl_done_cb done_cb;
 
 	__ASSERT(sep, "Invalid sep");
 	req_cb = a2dp_cb != NULL ? a2dp_cb->suspend_req : NULL;
-	done_cb =
-		(ep->stream != NULL && ep->stream->ops != NULL) ? ep->stream->ops->suspended : NULL;
-	return a2dp_ctrl_ind(session, sep, errcode, req_cb, done_cb);
+
+	/* a2dp_suspended() calls the suspended callback once the stream is suspended. */
+	return a2dp_ctrl_ind(session, sep, errcode, req_cb);
 }
 
 static int a2dp_close_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uint8_t *errcode)
@@ -533,7 +516,7 @@ static int a2dp_close_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, ui
 	req_cb = a2dp_cb != NULL ? a2dp_cb->release_req : NULL;
 
 	/* When stream is released, the `stream->ops->released` will be called. */
-	return a2dp_ctrl_ind(session, sep, errcode, req_cb, NULL);
+	return a2dp_ctrl_ind(session, sep, errcode, req_cb);
 }
 
 static int a2dp_abort_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, uint8_t *errcode)
@@ -544,7 +527,7 @@ static int a2dp_abort_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep, ui
 	req_cb = a2dp_cb != NULL ? a2dp_cb->abort_req : NULL;
 
 	/* When stream is released, the `stream->ops->released` will be called. */
-	return a2dp_ctrl_ind(session, sep, errcode, req_cb, NULL);
+	return a2dp_ctrl_ind(session, sep, errcode, req_cb);
 }
 
 static int a2dp_get_config_ind(struct bt_avdtp *session, struct bt_avdtp_sep *sep,
@@ -1460,6 +1443,36 @@ int bt_a2dp_stream_delay_report(struct bt_a2dp_stream *stream, uint16_t delay)
 }
 #endif
 
+static void a2dp_configured(struct bt_avdtp *session, struct bt_avdtp_sep *sep)
+{
+	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
+	struct bt_a2dp_stream *stream = ep->stream;
+
+	if ((stream != NULL) && (stream->ops != NULL) && (stream->ops->configured != NULL)) {
+		stream->ops->configured(stream);
+	}
+}
+
+static void a2dp_started(struct bt_avdtp *session, struct bt_avdtp_sep *sep)
+{
+	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
+	struct bt_a2dp_stream *stream = ep->stream;
+
+	if ((stream != NULL) && (stream->ops != NULL) && (stream->ops->started != NULL)) {
+		stream->ops->started(stream);
+	}
+}
+
+static void a2dp_suspended(struct bt_avdtp *session, struct bt_avdtp_sep *sep)
+{
+	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
+	struct bt_a2dp_stream *stream = ep->stream;
+
+	if ((stream != NULL) && (stream->ops != NULL) && (stream->ops->suspended != NULL)) {
+		stream->ops->suspended(stream);
+	}
+}
+
 static const struct bt_avdtp_ops_cb signaling_avdtp_ops = {
 	.connected = a2dp_connected,
 	.disconnected = a2dp_disconnected,
@@ -1477,6 +1490,9 @@ static const struct bt_avdtp_ops_cb signaling_avdtp_ops = {
 #ifdef CONFIG_BT_A2DP_SOURCE
 	.delay_report_ind = a2dp_delay_report_ind,
 #endif
+	.configured = a2dp_configured,
+	.started = a2dp_started,
+	.suspended = a2dp_suspended,
 };
 
 static void stream_connected(struct bt_avdtp_sep *sep)

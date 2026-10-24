@@ -1037,6 +1037,10 @@ static void avdtp_process_configuration_cmd(struct bt_avdtp *session, struct net
 	}
 
 	avdtp_sep_unlock(sep);
+
+	if (!err && !avdtp_err_code && (session->ops->configured != NULL)) {
+		session->ops->configured(session, sep);
+	}
 }
 
 static void avdtp_process_configuration_rsp(struct bt_avdtp *session, struct net_buf *buf,
@@ -1244,6 +1248,10 @@ static void avdtp_start_cmd(struct bt_avdtp *session, struct net_buf *buf, uint8
 	}
 
 	avdtp_sep_unlock(sep);
+
+	if (!err && !avdtp_err_code && (session->ops->started != NULL)) {
+		session->ops->started(session, sep);
+	}
 }
 
 static void avdtp_start_rsp(struct bt_avdtp *session, struct net_buf *buf, uint8_t msg_type)
@@ -1445,6 +1453,10 @@ static void avdtp_suspend_cmd(struct bt_avdtp *session, struct net_buf *buf, uin
 	}
 
 	avdtp_sep_unlock(sep);
+
+	if (!err && !avdtp_err_code && (session->ops->suspended != NULL)) {
+		session->ops->suspended(session, sep);
+	}
 }
 
 static void avdtp_suspend_rsp(struct bt_avdtp *session, struct net_buf *buf, uint8_t msg_type)

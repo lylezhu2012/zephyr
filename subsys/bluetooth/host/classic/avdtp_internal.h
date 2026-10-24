@@ -257,6 +257,16 @@ struct bt_avdtp_ops_cb {
 
 	int (*delay_report_ind)(struct bt_avdtp *session, struct bt_avdtp_sep *sep,
 				struct net_buf *buf, uint8_t *errcode);
+
+	/*
+	 * Acceptor: the accept response of a (re)configuration, start or suspend command has been
+	 * queued, and the state of the endpoint has been changed (a reconfiguration keeps it).
+	 */
+	void (*configured)(struct bt_avdtp *session, struct bt_avdtp_sep *sep);
+
+	void (*started)(struct bt_avdtp *session, struct bt_avdtp_sep *sep);
+
+	void (*suspended)(struct bt_avdtp *session, struct bt_avdtp_sep *sep);
 };
 
 /** @brief Global AVDTP session structure. */

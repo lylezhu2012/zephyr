@@ -334,10 +334,12 @@ struct bt_a2dp_ep test_remote_ep = {
 };
 
 uint8_t test_config_req_err;
+void (*test_config_req_hook)(void);
 struct bt_a2dp_codec_ie test_req_cfg;
 bool test_req_delay_report;
 struct bt_a2dp_codec_ie test_rsp_cfg;
 atomic_t test_media_bad;
+bool test_act_in_cb;
 
 /* Sequence number of the next media packet sent, and expected, in the current test. */
 static uint16_t media_tx_seq;
@@ -379,12 +381,18 @@ static int a2dp_config_req(struct bt_a2dp *a2dp, struct bt_a2dp_ep *ep,
 			   uint8_t *rsp_err_code)
 {
 	uint8_t err = test_config_req_err;
+	void (*hook)(void) = test_config_req_hook;
 
 	test_req_cfg = *codec_cfg->codec_config;
 	test_req_delay_report = codec_cfg->delay_report;
 
-	/* The error code applies to one request only. */
+	/* The error code and the hook apply to one request only. */
 	test_config_req_err = 0;
+	test_config_req_hook = NULL;
+
+	if (hook != NULL) {
+		hook();
+	}
 
 	*rsp_err_code = err;
 	if (err == 0) {
@@ -523,10 +531,67 @@ static struct bt_a2dp_cb a2dp_cb = {
 	.delay_report_rsp = a2dp_delay_report_rsp,
 };
 
+/* SBC media payload header (one frame) followed by a pattern of the sequence number. */
+#define MEDIA_SBC_HDR ((uint8_t)BT_A2DP_SBC_MEDIA_HDR_ENCODE(1, 0, 0, 0))
+
+static void media_fill(uint8_t *data, size_t len, uint16_t seq_num)
+{
+	for (size_t i = 0; i < len; i++) {
+		data[i] = (uint8_t)((seq_num * 31U) + (i * 7U) + 1U);
+	}
+}
+
+NET_BUF_POOL_DEFINE(media_tx_pool, 4, BT_L2CAP_BUF_SIZE(CONFIG_BT_L2CAP_TX_MTU),
+		    CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
+
+/* Send the next media packet of the test on @p stream: the result of the send, or -ENOMEM. */
+static int media_send_next(struct bt_a2dp_stream *stream, k_timeout_t timeout)
+{
+	uint8_t payload[TEST_MEDIA_PAYLOAD_LEN];
+	uint16_t seq_num = media_tx_seq;
+	struct net_buf *buf;
+	int err;
+
+	buf = bt_a2dp_stream_create_pdu(&media_tx_pool, timeout);
+	if (buf == NULL) {
+		return -ENOMEM;
+	}
+
+	net_buf_add_u8(buf, MEDIA_SBC_HDR);
+	media_fill(payload, sizeof(payload), seq_num);
+	net_buf_add_mem(buf, payload, sizeof(payload));
+
+	err = bt_a2dp_stream_send(stream, buf, seq_num, (uint32_t)seq_num * TEST_MEDIA_TS_STEP);
+	if (err != 0) {
+		net_buf_unref(buf);
+		return err;
+	}
+
+	media_tx_seq++;
+
+	return 0;
+}
+
+static enum bt_avdtp_sep_type stream_tsep(struct bt_a2dp_stream *stream)
+{
+	return stream->local_ep->sep.sep_info.tsep;
+}
+
 static void stream_configured(struct bt_a2dp_stream *stream)
 {
+	int err = 0;
+
 	atomic_set(&stream_in_use, 1);
-	test_evt_post(EVT_CONFIGURED, stream, 0, 0);
+
+	/*
+	 * AVDTP v1.3, 8.19.1: "A first Delay Report shall be sent immediately after the SEP has
+	 * been configured."
+	 */
+	if (test_act_in_cb && (stream_tsep(stream) == BT_AVDTP_SINK) && stream->delay_report) {
+		err = bt_a2dp_stream_delay_report(stream, TEST_DELAY_REPORT_STREAM);
+	}
+
+	test_evt_post(EVT_CONFIGURED, stream, err, 0);
 }
 
 static void stream_established(struct bt_a2dp_stream *stream)
@@ -542,22 +607,24 @@ static void stream_released(struct bt_a2dp_stream *stream)
 
 static void stream_started(struct bt_a2dp_stream *stream)
 {
-	test_evt_post(EVT_STARTED, stream, 0, 0);
+	int err = 0;
+
+	if (test_act_in_cb && (stream_tsep(stream) == BT_AVDTP_SOURCE)) {
+		err = media_send_next(stream, K_NO_WAIT);
+	}
+
+	test_evt_post(EVT_STARTED, stream, err, 0);
 }
 
 static void stream_suspended(struct bt_a2dp_stream *stream)
 {
-	test_evt_post(EVT_SUSPENDED, stream, 0, 0);
-}
+	int err = 0;
 
-/* SBC media payload header (one frame) followed by a pattern of the sequence number. */
-#define MEDIA_SBC_HDR ((uint8_t)BT_A2DP_SBC_MEDIA_HDR_ENCODE(1, 0, 0, 0))
-
-static void media_fill(uint8_t *data, size_t len, uint16_t seq_num)
-{
-	for (size_t i = 0; i < len; i++) {
-		data[i] = (uint8_t)((seq_num * 31U) + (i * 7U) + 1U);
+	if (test_act_in_cb && (stream_tsep(stream) == BT_AVDTP_SOURCE)) {
+		err = media_send_next(stream, K_NO_WAIT);
 	}
+
+	test_evt_post(EVT_SUSPENDED, stream, err, 0);
 }
 
 static void stream_recv(struct bt_a2dp_stream *stream, struct net_buf *buf, uint16_t seq_num,
@@ -638,6 +705,8 @@ void test_a2dp_before(void)
 	test_evt_reset();
 
 	test_config_req_err = 0;
+	test_config_req_hook = NULL;
+	test_act_in_cb = false;
 	atomic_set(&test_media_bad, 0);
 	media_tx_seq = 0;
 	media_rx_seq = 0;
@@ -882,15 +951,20 @@ static void sbc_cfg_set(uint8_t freq, uint8_t min_bitpool, bool delay_report)
 	cfg.delay_report = delay_report;
 }
 
+int test_stream_config_send(struct bt_a2dp_stream *stream, struct bt_a2dp_ep *local_ep,
+			    uint8_t freq, uint8_t min_bitpool, bool delay_report)
+{
+	sbc_cfg_set(freq, min_bitpool, delay_report);
+	bt_a2dp_stream_cb_register(stream, &stream_ops);
+
+	return bt_a2dp_stream_config(test_a2dp, stream, local_ep, &test_remote_ep, &cfg);
+}
+
 int test_int_config_send(enum bt_avdtp_sep_type local_tsep, uint8_t freq, uint8_t min_bitpool,
 			 bool delay_report)
 {
-	sbc_cfg_set(freq, min_bitpool, delay_report);
-	bt_a2dp_stream_cb_register(&test_stream, &stream_ops);
-
-	return bt_a2dp_stream_config(test_a2dp, &test_stream,
-				     test_local_ep(local_tsep, delay_report), &test_remote_ep,
-				     &cfg);
+	return test_stream_config_send(&test_stream, test_local_ep(local_tsep, delay_report), freq,
+				       min_bitpool, delay_report);
 }
 
 void test_int_config(enum bt_avdtp_sep_type local_tsep, uint8_t freq, uint8_t min_bitpool,
@@ -980,31 +1054,13 @@ void test_delay_report_cmd(uint16_t value, uint8_t err)
 	test_expect_rsp(EVT_DELAY_REPORT_RSP, err);
 }
 
-NET_BUF_POOL_DEFINE(media_tx_pool, 4, BT_L2CAP_BUF_SIZE(CONFIG_BT_L2CAP_TX_MTU),
-		    CONFIG_BT_CONN_TX_USER_DATA_SIZE, NULL);
-
 void test_media_send(uint16_t count)
 {
-	uint8_t payload[TEST_MEDIA_PAYLOAD_LEN];
-
 	for (uint16_t i = 0; i < count; i++) {
-		uint16_t seq_num = media_tx_seq++;
-		struct net_buf *buf;
 		int err;
 
-		buf = bt_a2dp_stream_create_pdu(&media_tx_pool, TEST_A2DP_TIMEOUT);
-		zassert_not_null(buf, "No media buffer");
-
-		net_buf_add_u8(buf, MEDIA_SBC_HDR);
-		media_fill(payload, sizeof(payload), seq_num);
-		net_buf_add_mem(buf, payload, sizeof(payload));
-
-		err = bt_a2dp_stream_send(&test_stream, buf, seq_num,
-					  (uint32_t)seq_num * TEST_MEDIA_TS_STEP);
-		if (err != 0) {
-			net_buf_unref(buf);
-		}
-		zassert_equal(err, 0, "Failed to send media packet %u (err %d)", seq_num, err);
+		err = media_send_next(&test_stream, TEST_A2DP_TIMEOUT);
+		zassert_equal(err, 0, "Failed to send media packet %u (err %d)", media_tx_seq, err);
 	}
 }
 

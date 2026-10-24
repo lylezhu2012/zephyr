@@ -8,7 +8,9 @@
  * Stream tests of the initiator (device 0), beyond the board-to-board tests: media transfer in
  * both directions, delay reporting configured, reconfiguration of the sampling frequency,
  * configurations rejected by the stack and by the application, abort without media channel, the
- * discovery with AVDTP version 1.2, and stream commands without a configured stream.
+ * discovery with AVDTP version 1.2, stream commands without a configured stream, media and the
+ * first delay report sent by the acceptor from its stream callbacks, the configuration of an
+ * endpoint in use, a stream after a rejected configuration and a configuration collision.
  */
 
 #include <zephyr/kernel.h>
@@ -238,6 +240,121 @@ ZTEST(a2dp_int_stream, test_010_released_stream)
 	release();
 
 	test_stream_cmds_refused();
+
+	test_br_sync();
+}
+
+/* The acceptor (source) sends media from its started callback, and none from suspended. */
+ZTEST(a2dp_int_stream, test_011_media_from_started_cb)
+{
+	test_br_sync();
+
+	test_int_prepare(BT_AVDTP_SINK);
+	establish();
+	start();
+	test_media_expect(1);
+	suspend();
+	release();
+
+	test_br_sync();
+}
+
+/* The acceptor (sink) sends the first delay report from its configured callback. */
+ZTEST(a2dp_int_stream, test_012_delay_report_from_configured_cb)
+{
+	struct test_event evt;
+
+	test_br_sync();
+
+	test_int_connect();
+	test_int_discover(BT_AVDTP_SOURCE, true, 0U);
+	test_int_config(BT_AVDTP_SOURCE, A2DP_SBC_SAMP_FREQ_44100, TEST_MIN_BITPOOL, true,
+			BT_AVDTP_SUCCESS);
+
+	TEST_EXPECT(EVT_DELAY_REPORT_REQ, TEST_A2DP_TIMEOUT, &evt);
+	zassert_equal_ptr(evt.obj, &test_stream, "Delay report of an unexpected stream");
+	zassert_equal(evt.value, TEST_DELAY_REPORT_STREAM, "Delay report %d", evt.value);
+	TEST_EXPECT(EVT_DELAY_REPORT, TEST_A2DP_TIMEOUT, &evt);
+	zassert_equal_ptr(evt.obj, &test_stream, "Delay report of an unexpected stream");
+	zassert_equal(evt.value, TEST_DELAY_REPORT_STREAM, "Delay report %d", evt.value);
+
+	test_br_sync();
+}
+
+/*
+ * The configuration of another stream on the endpoint of the test stream is refused, and the
+ * test stream keeps its endpoint.
+ */
+ZTEST(a2dp_int_stream, test_013_config_endpoint_in_use)
+{
+	BT_A2DP_SBC_EP_CFG_DEFAULT(cfg_44100, A2DP_SBC_SAMP_FREQ_44100);
+	static struct bt_a2dp_stream other;
+	int err;
+
+	memset(&other, 0, sizeof(other));
+
+	test_br_sync();
+
+	test_int_prepare(BT_AVDTP_SINK);
+
+	err = bt_a2dp_stream_config(test_a2dp, &other, test_local_ep(BT_AVDTP_SINK, false),
+				    &test_remote_ep, &cfg_44100);
+	zassert_equal(err, -EINVAL, "Configuration on an endpoint in use (err %d)", err);
+	CHECK_EINVAL(bt_a2dp_stream_abort(&other));
+
+	test_stream_cmd(bt_a2dp_stream_abort, EVT_ABORT_RSP, BT_AVDTP_SUCCESS);
+	test_expect(EVT_RELEASED);
+
+	test_br_sync();
+}
+
+/* After a configuration rejected by the peer, the stream is not configured. */
+ZTEST(a2dp_int_stream, test_014_rejected_config_stream)
+{
+	test_br_sync();
+
+	test_int_connect();
+	test_int_discover(BT_AVDTP_SINK, false, 0U);
+
+	/* 16 kHz is outside the capabilities of the peer endpoint. */
+	test_int_config(BT_AVDTP_SINK, A2DP_SBC_SAMP_FREQ_16000, TEST_MIN_BITPOOL, false,
+			BT_A2DP_NOT_SUPPORTED_SAMPLING_FREQUENCY);
+	test_stream_cmds_refused();
+
+	test_int_config(BT_AVDTP_SINK, A2DP_SBC_SAMP_FREQ_44100, TEST_MIN_BITPOOL, false,
+			BT_AVDTP_SUCCESS);
+
+	test_br_sync();
+}
+
+/*
+ * Configuration collision: while the configuration of the initiator is pending, the acceptor
+ * configures the same endpoint of the initiator, then rejects the configuration of the
+ * initiator. The stack of the initiator refuses the configuration of its endpoint in use, and the
+ * endpoint can be configured again.
+ */
+ZTEST(a2dp_int_stream, test_015_config_collision)
+{
+	test_br_sync();
+
+	test_int_connect();
+
+	/* The acceptor has discovered the endpoints of the initiator. */
+	test_br_sync();
+
+	test_int_discover(BT_AVDTP_SINK, false, 0U);
+	test_int_config(BT_AVDTP_SINK, A2DP_SBC_SAMP_FREQ_44100, TEST_MIN_BITPOOL, false,
+			BT_AVDTP_SEP_IN_USE);
+
+	/*
+	 * The configuration of the acceptor is sent before its response on the same channel, so
+	 * it has been handled already: refused by the stack, not reported.
+	 */
+	test_evt_none(EVT_CONFIG_REQ, K_NO_WAIT);
+	test_evt_none(EVT_CONFIGURED, K_NO_WAIT);
+
+	test_int_config(BT_AVDTP_SINK, A2DP_SBC_SAMP_FREQ_44100, TEST_MIN_BITPOOL, false,
+			BT_AVDTP_SUCCESS);
 
 	test_br_sync();
 }

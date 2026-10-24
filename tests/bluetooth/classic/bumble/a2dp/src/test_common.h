@@ -103,6 +103,9 @@ extern struct bt_a2dp_ep test_remote_ep;
 /* Response error code of the acceptor to the next configuration request, 0 accepts it. */
 extern uint8_t test_config_req_err;
 
+/* Called from the next configuration request, before it is answered. */
+extern void (*test_config_req_hook)(void);
+
 /* Configuration of the last (re)configuration request seen by the acceptor. */
 extern struct bt_a2dp_codec_ie test_req_cfg;
 extern bool test_req_delay_report;
@@ -112,6 +115,13 @@ extern struct bt_a2dp_codec_ie test_rsp_cfg;
 
 /* Media packets received with an unexpected payload. */
 extern atomic_t test_media_bad;
+
+/*
+ * The stream callbacks act as an application does (set by a test, cleared before each test):
+ * configured sends a delay report on a sink with delay reporting, started and suspended send a
+ * media packet on a source. The value of their event is the result of the call, 0 otherwise.
+ */
+extern bool test_act_in_cb;
 
 void test_evt_reset(void);
 void test_evt_post(enum test_evt type, void *obj, int32_t value, int32_t value2);
@@ -168,8 +178,11 @@ void test_int_discover_seid(enum bt_avdtp_sep_type local_tsep, uint8_t seid,
 /*
  * Configure the stream with SBC @p freq and @p min_bitpool, from the local endpoint of type
  * @p local_tsep to the discovered endpoint; @p err is the expected response error code.
- * test_int_config_send() only sends the request and returns the result of the API call.
+ * test_int_config_send() only sends the request and returns the result of the API call;
+ * test_stream_config_send() does so for @p stream from @p local_ep.
  */
+int test_stream_config_send(struct bt_a2dp_stream *stream, struct bt_a2dp_ep *local_ep,
+			    uint8_t freq, uint8_t min_bitpool, bool delay_report);
 int test_int_config_send(enum bt_avdtp_sep_type local_tsep, uint8_t freq, uint8_t min_bitpool,
 			 bool delay_report);
 void test_int_config(enum bt_avdtp_sep_type local_tsep, uint8_t freq, uint8_t min_bitpool,

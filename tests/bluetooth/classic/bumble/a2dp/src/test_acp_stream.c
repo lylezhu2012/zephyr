@@ -125,6 +125,7 @@ ZTEST(a2dp_acp_stream, test_004_config_rejected)
 	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_UNSUPPORTED_CONFIGURATION);
 	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_SUCCESS);
 	test_expect(EVT_CONFIGURED);
+	test_evt_none(EVT_CONFIGURED, K_NO_WAIT);
 
 	test_br_sync();
 }
@@ -136,13 +137,6 @@ ZTEST(a2dp_acp_stream, test_005_media_sink_int)
 	configured(BT_AVDTP_SOURCE, false);
 	establish();
 	start();
-
-	/*
-	 * The stack reports started from the start indication, before the endpoint is streaming
-	 * (bt_avdtp_send_media_data() refuses it until then). Sending from the test thread works
-	 * as long as the Bluetooth RX thread, cooperative and of a higher priority, does not block
-	 * while it handles the indication.
-	 */
 	test_media_send(TEST_MEDIA_PKTS);
 	suspend();
 	release();
@@ -201,6 +195,134 @@ ZTEST(a2dp_acp_stream, test_010_released_stream)
 	release();
 
 	test_stream_cmds_refused();
+
+	test_br_sync();
+}
+
+/* The value of the next event of @p type of the test stream: the result of the callback action. */
+static int32_t expect_value(enum test_evt type)
+{
+	struct test_event evt;
+
+	TEST_EXPECT(type, TEST_A2DP_TIMEOUT, &evt);
+	zassert_equal_ptr(evt.obj, &test_stream, "%s of an unexpected stream", test_evt_str(type));
+
+	return evt.value;
+}
+
+/*
+ * An application sends media once the stream is started, possibly from the started callback, and
+ * no more once it is suspended.
+ */
+ZTEST(a2dp_acp_stream, test_011_media_from_started_cb)
+{
+	int32_t err;
+
+	test_act_in_cb = true;
+
+	test_br_sync();
+
+	configured(BT_AVDTP_SOURCE, false);
+	establish();
+
+	test_expect(EVT_START_REQ);
+	err = expect_value(EVT_STARTED);
+	zassert_equal(err, 0, "Media packet not sent from the started callback (err %d)", err);
+
+	test_expect(EVT_SUSPEND_REQ);
+	err = expect_value(EVT_SUSPENDED);
+	zassert_equal(err, -EIO, "Media packet sent from the suspended callback (err %d)", err);
+
+	release();
+
+	test_br_sync();
+}
+
+/* A sink sends the first delay report from the configured callback (AVDTP v1.3, 8.19.1). */
+ZTEST(a2dp_acp_stream, test_012_delay_report_from_configured_cb)
+{
+	int32_t err;
+
+	test_act_in_cb = true;
+
+	test_br_sync();
+
+	test_acp_wait_connected();
+	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_SUCCESS);
+	zassert_true(test_req_delay_report, "Delay reporting not configured");
+	zassert_equal_ptr(test_stream.local_ep, test_local_ep(BT_AVDTP_SINK, true),
+			  "Unexpected local endpoint");
+
+	err = expect_value(EVT_CONFIGURED);
+	zassert_equal(err, 0, "Delay report not sent from the configured callback (err %d)", err);
+	test_expect_rsp(EVT_DELAY_REPORT_RSP, BT_AVDTP_SUCCESS);
+
+	test_br_sync();
+}
+
+ZTEST(a2dp_acp_stream, test_013_config_endpoint_in_use)
+{
+	test_br_sync();
+
+	configured(BT_AVDTP_SOURCE, false);
+	test_expect(EVT_ABORT_REQ);
+	test_expect(EVT_RELEASED);
+
+	test_br_sync();
+}
+
+/* The configuration outside the capabilities is rejected by the stack and not reported. */
+ZTEST(a2dp_acp_stream, test_014_rejected_config_stream)
+{
+	test_br_sync();
+
+	test_acp_wait_connected();
+	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_SUCCESS);
+	test_expect(EVT_CONFIGURED);
+	test_evt_none(EVT_CONFIGURED, K_NO_WAIT);
+
+	test_br_sync();
+}
+
+static struct bt_a2dp_stream collision_stream;
+static int collision_err;
+
+/* From the configuration request of the initiator: configure the endpoint of the initiator. */
+static void collision_config(void)
+{
+	collision_err =
+		test_stream_config_send(&collision_stream, test_local_ep(BT_AVDTP_SOURCE, true),
+					A2DP_SBC_SAMP_FREQ_44100, TEST_MIN_BITPOOL, false);
+}
+
+ZTEST(a2dp_acp_stream, test_015_config_collision)
+{
+	struct test_event evt;
+
+	memset(&collision_stream, 0, sizeof(collision_stream));
+	collision_err = -EAGAIN;
+
+	test_br_sync();
+
+	/* The sink endpoint of the initiator. */
+	test_acp_wait_connected();
+	test_int_discover(BT_AVDTP_SOURCE, true, 0U);
+
+	test_config_req_err = BT_AVDTP_SEP_IN_USE;
+	test_config_req_hook = collision_config;
+
+	test_br_sync();
+
+	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_SEP_IN_USE);
+	zassert_equal(collision_err, 0, "Failed to send the configuration (err %d)", collision_err);
+
+	TEST_EXPECT(EVT_CONFIG_RSP, TEST_A2DP_TIMEOUT, &evt);
+	zassert_equal_ptr(evt.obj, &collision_stream, "config_rsp of an unexpected stream");
+	zassert_equal(evt.value, BT_AVDTP_SEP_IN_USE, "Configuration error 0x%02x", evt.value);
+
+	/* The initiator configures its endpoint again. */
+	test_expect_rsp(EVT_CONFIG_REQ, BT_AVDTP_SUCCESS);
+	test_expect(EVT_CONFIGURED);
 
 	test_br_sync();
 }

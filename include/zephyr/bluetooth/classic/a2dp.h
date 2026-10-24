@@ -832,6 +832,7 @@ void bt_a2dp_stream_cb_register(struct bt_a2dp_stream *stream, struct bt_a2dp_st
  *  This function to configure the selected endpoint that is found by
  *  bt_a2dp_discover.
  *  This function sends AVDTP_SET_CONFIGURATION.
+ *  The stream object must be zeroed before its first configuration.
  *
  *  @param a2dp The a2dp instance.
  *  @param stream Stream object.
@@ -839,7 +840,8 @@ void bt_a2dp_stream_cb_register(struct bt_a2dp_stream *stream, struct bt_a2dp_st
  *  @param remote_ep The remote endpoint.
  *  @param config The config to configure the endpoint.
  *
- *  @return 0 in case of success and error code in case of error.
+ *  @return 0 in case of success and error code in case of error, -EINVAL if
+ *          @p local_ep is used by a stream or @p stream is configured.
  */
 int bt_a2dp_stream_config(struct bt_a2dp *a2dp, struct bt_a2dp_stream *stream,
 			  struct bt_a2dp_ep *local_ep, struct bt_a2dp_ep *remote_ep,

@@ -65,6 +65,8 @@ struct bt_a2dp {
 	struct bt_avdtp_set_configuration_params set_config_param;
 	struct bt_avdtp_ctrl_params ctrl_param;
 	struct bt_avdtp_delay_report_params delay_report_param;
+	/* Stream of the configuration indication, bound to its endpoint once it is answered. */
+	struct bt_a2dp_stream *config_ind_stream;
 	uint8_t get_cap_index;
 	enum bt_a2dp_internal_state a2dp_state;
 	uint8_t peer_seps_count;
@@ -322,6 +324,11 @@ static int a2dp_process_config_ind(struct bt_avdtp *session, struct bt_avdtp_sep
 
 	ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
 
+	if (!reconfig && (ep->stream != NULL)) {
+		*errcode = BT_AVDTP_SEP_IN_USE;
+		return -EINVAL;
+	}
+
 	/* parse the configuration */
 	err = bt_avdtp_parse_capability_codec(buf, &codec_type, &codec_info_element,
 					      &codec_info_element_len, &delay_report);
@@ -392,7 +399,7 @@ static int a2dp_process_config_ind(struct bt_avdtp *session, struct bt_avdtp_sep
 			stream->remote_ep = NULL;
 			stream->codec_config = *cfg.codec_config;
 			stream->delay_report = cfg.delay_report;
-			ep->stream = stream;
+			a2dp->config_ind_stream = stream;
 		} else {
 			*errcode = rsp_err_code != 0 ? rsp_err_code : BT_AVDTP_BAD_ACP_SEID;
 		}
@@ -697,6 +704,12 @@ static int bt_a2dp_set_config_cb(struct bt_avdtp_req *req, struct net_buf *buf)
 		stream->codec_config.len = param->codec_specific_ie_len;
 		memcpy(&stream->codec_config.codec_ie[0], param->codec_specific_ie,
 		       param->codec_specific_ie_len);
+	} else if (req->sig == BT_AVDTP_SET_CONFIGURATION) {
+		/*
+		 * The stream is not configured: release the endpoint before the callback, which
+		 * may configure the stream again.
+		 */
+		ep->stream = NULL;
 	}
 
 	if ((a2dp_cb != NULL) && (a2dp_cb->config_rsp != NULL)) {
@@ -980,6 +993,12 @@ int bt_a2dp_stream_config(struct bt_a2dp *a2dp, struct bt_a2dp_stream *stream,
 		return -EBUSY;
 	}
 
+	/* The endpoint is used by a stream, or the stream is configured on another endpoint. */
+	if ((local_ep->stream != NULL) ||
+	    ((stream->local_ep != NULL) && (stream->local_ep->stream == stream))) {
+		return -EINVAL;
+	}
+
 	stream->local_ep = local_ep;
 	stream->remote_ep = remote_ep;
 	stream->remote_ep_id = remote_ep->sep.sep_info.id;
@@ -995,6 +1014,7 @@ int bt_a2dp_stream_config(struct bt_a2dp *a2dp, struct bt_a2dp_stream *stream,
 	err = bt_avdtp_set_configuration(&a2dp->session, &a2dp->set_config_param);
 	if (err != 0) {
 		bt_a2dp_req_clear_busy(&a2dp->set_config_param.req);
+		local_ep->stream = NULL;
 	}
 
 	return err;
@@ -1445,8 +1465,18 @@ int bt_a2dp_stream_delay_report(struct bt_a2dp_stream *stream, uint16_t delay)
 
 static void a2dp_configured(struct bt_avdtp *session, struct bt_avdtp_sep *sep)
 {
+	struct bt_a2dp *a2dp = A2DP_AVDTP(session);
 	struct bt_a2dp_ep *ep = CONTAINER_OF(sep, struct bt_a2dp_ep, sep);
-	struct bt_a2dp_stream *stream = ep->stream;
+	struct bt_a2dp_stream *stream;
+
+	/* A configuration (not a reconfiguration) has been answered: bind its stream. */
+	if ((ep->stream == NULL) && (a2dp->config_ind_stream != NULL) &&
+	    (a2dp->config_ind_stream->local_ep == ep)) {
+		ep->stream = a2dp->config_ind_stream;
+	}
+
+	a2dp->config_ind_stream = NULL;
+	stream = ep->stream;
 
 	if ((stream != NULL) && (stream->ops != NULL) && (stream->ops->configured != NULL)) {
 		stream->ops->configured(stream);

@@ -80,7 +80,11 @@ Test Cases
   report; reconfiguration from 44.1 kHz to 48 kHz read back with get configuration; configurations
   rejected by the stack and by the application; abort before the media channel exists; discovery
   with AVDTP version 1.2, without the delay reporting capability; stream commands on a stream that
-  is not configured, on a released stream and without a stream.
+  is not configured, on a released stream and without a stream; media sent by the acceptor from
+  its started callback and refused from its suspended callback; the first delay report sent by
+  the acceptor (sink) from its configured callback; the configuration of an endpoint used by
+  another stream; the stream after a configuration rejected by the peer; and a configuration
+  collision, both devices configuring the same endpoint at once.
 
 Board-to-board Test Mapping
 ***************************

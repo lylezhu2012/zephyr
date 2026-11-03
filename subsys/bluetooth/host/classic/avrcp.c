@@ -3325,7 +3325,6 @@ static int bt_avrcp_ct_vendor_dependent(struct bt_avrcp_ct *ct, uint8_t tid, uin
 
 	if (net_buf_headroom(buf) < (sizeof(*pdu) + sizeof(*hdr))) {
 		LOG_WRN("Not enough headroom: for vendor dependent PDU");
-		net_buf_unref(buf);
 		return -ENOMEM;
 	}
 
@@ -3481,7 +3480,6 @@ int bt_avrcp_ct_get_curr_player_app_setting_val(struct bt_avrcp_ct *ct, uint8_t 
 					   buf);
 	if (err < 0) {
 		LOG_ERR("Failed to send AVRCP PDU (err: %d)", err);
-		net_buf_unref(buf);
 	}
 	return err;
 }

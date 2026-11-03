@@ -5,7 +5,7 @@
 /*
  * Copyright (c) 2015-2016 Intel Corporation
  * Copyright (C) 2024 Xiaomi Corporation
- * Copyright 2025 NXP
+ * Copyright 2025-2026 NXP
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -430,34 +430,29 @@ static struct bt_avrcp *avrcp_get_connection(struct bt_conn *conn)
 	return &avrcp_connection[index];
 }
 
+/*
+ * The CT, TG and connection pools share the index, the index of @p avrcp in avrcp_connection.
+ * It is not taken from acl_conn: acl_conn is released with the control channel, before the
+ * browsing channel when the ACL link is lost.
+ */
 static inline struct bt_avrcp_ct *get_avrcp_ct(struct bt_avrcp *avrcp)
 {
-	size_t index;
-
 	if (avrcp == NULL) {
 		LOG_ERR("Invalid parameter");
 		return NULL;
 	}
 
-	index = (size_t)bt_conn_index(avrcp->acl_conn);
-	__ASSERT(index < ARRAY_SIZE(avrcp_connection), "Conn index is out of bounds");
-
-	return &bt_avrcp_ct_pool[index];
+	return &bt_avrcp_ct_pool[ARRAY_INDEX(avrcp_connection, avrcp)];
 }
 
 static inline struct bt_avrcp_tg *get_avrcp_tg(struct bt_avrcp *avrcp)
 {
-	size_t index;
-
 	if (avrcp == NULL) {
 		LOG_ERR("Invalid parameter");
 		return NULL;
 	}
 
-	index = (size_t)bt_conn_index(avrcp->acl_conn);
-	__ASSERT(index < ARRAY_SIZE(avrcp_connection), "Conn index is out of bounds");
-
-	return &bt_avrcp_tg_pool[index];
+	return &bt_avrcp_tg_pool[ARRAY_INDEX(avrcp_connection, avrcp)];
 }
 
 static int bt_avrcp_rsp_to_status(uint8_t rsp, struct net_buf *buf, uint8_t *status)

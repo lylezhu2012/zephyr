@@ -1253,6 +1253,11 @@ static int process_register_notification_rsp(struct bt_avrcp *avrcp, uint8_t tid
 		}
 		break;
 	case BT_AVRCP_EVT_PLAYER_APP_SETTING_CHANGED:
+		if (buf->len < sizeof(event_data->setting_changed.num_of_attr)) {
+			LOG_ERR("Invalid PLAYER_APP_SETTING_CHANGED response length");
+			return BT_AVRCP_STATUS_INVALID_PARAMETER;
+		}
+
 		expected_len = sizeof(event_data->setting_changed.num_of_attr) +
 			       event_data->setting_changed.num_of_attr *
 			       sizeof(struct bt_avrcp_app_setting_attr_val);

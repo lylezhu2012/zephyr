@@ -2121,7 +2121,8 @@ static int avrcp_register_notification_cmd_handler(struct bt_avrcp *avrcp, uint8
 
 	get_avrcp_tg(avrcp)->tg_notify[cmd->event_id].registered = true;
 	get_avrcp_tg(avrcp)->tg_notify[cmd->event_id].interim_sent = false;
-	avrcp_tg_cb->register_notification(get_avrcp_tg(avrcp), tid, cmd->event_id, cmd->interval);
+	avrcp_tg_cb->register_notification(get_avrcp_tg(avrcp), tid, cmd->event_id,
+					   sys_be32_to_cpu(cmd->interval));
 	return BT_AVRCP_STATUS_OPERATION_COMPLETED;
 }
 

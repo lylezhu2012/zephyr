@@ -1,0 +1,42 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+#
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - bluetooth
+  platform_allow:
+    - native_sim
+  harness: ztest
+  sidecar: bumble
+tests:
+  bluetooth.classic.sim.avrcp.control:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=avrcp_ct_control::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=avrcp_tg_control::*
+  bluetooth.classic.sim.avrcp.browsing:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=avrcp_ct_browsing::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=avrcp_tg_browsing::*
+  bluetooth.classic.sim.avrcp.robustness:
+    timeout: 900
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=avrcp_ct_robustness::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=avrcp_tg_robustness::*

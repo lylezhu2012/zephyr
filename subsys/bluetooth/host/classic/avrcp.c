@@ -856,7 +856,7 @@ static int send_single_vendor_rsp(struct bt_avrcp_tg *tg, uint8_t tid, uint8_t r
 
 	param_len = buf->len;
 
-	if (net_buf_headroom(buf) < (sizeof(*pdu) + sizeof(*hdr))) {
+	if (net_buf_headroom(buf) < (BT_AVRCP_HEADROOM + sizeof(*pdu))) {
 		LOG_WRN("Not enough headroom: for vendor dependent PDU");
 		return -ENOMEM;
 	}
@@ -3323,7 +3323,7 @@ static int bt_avrcp_ct_vendor_dependent(struct bt_avrcp_ct *ct, uint8_t tid, uin
 
 	param_len = buf->len;
 
-	if (net_buf_headroom(buf) < (sizeof(*pdu) + sizeof(*hdr))) {
+	if (net_buf_headroom(buf) < (BT_AVRCP_HEADROOM + sizeof(*pdu))) {
 		LOG_WRN("Not enough headroom: for vendor dependent PDU");
 		return -ENOMEM;
 	}

@@ -1165,6 +1165,7 @@ static int process_register_notification_rsp(struct bt_avrcp *avrcp, uint8_t tid
 					     uint8_t rsp_code, struct net_buf *buf)
 {
 	struct bt_avrcp_event_data *event_data;
+	struct bt_avrcp_event_data setting_data;
 	uint8_t event_id;
 	uint8_t status = BT_AVRCP_STATUS_INTERNAL_ERROR;
 	uint16_t expected_len;
@@ -1259,6 +1260,12 @@ static int process_register_notification_rsp(struct bt_avrcp *avrcp, uint8_t tid
 			LOG_ERR("Invalid PLAYER_APP_SETTING_CHANGED attribute length");
 			return BT_AVRCP_STATUS_INVALID_PARAMETER;
 		}
+
+		/* attr_vals is a pointer: point it to the pairs that follow the 1-octet count. */
+		setting_data.setting_changed.num_of_attr = event_data->setting_changed.num_of_attr;
+		setting_data.setting_changed.attr_vals =
+			(struct bt_avrcp_app_setting_attr_val *)&buf->data[1];
+		event_data = &setting_data;
 		break;
 	case BT_AVRCP_EVT_ADDRESSED_PLAYER_CHANGED:
 		if (buf->len < sizeof(event_data->addressed_player_changed)) {

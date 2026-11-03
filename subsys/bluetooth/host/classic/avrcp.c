@@ -4455,6 +4455,24 @@ static int build_notification_rsp_data(uint8_t event_id, struct bt_avrcp_event_d
 {
 	uint16_t param_len = sizeof(event_id);
 
+	switch (event_id) {
+	case BT_AVRCP_EVT_TRACK_REACHED_END:
+	case BT_AVRCP_EVT_TRACK_REACHED_START:
+	case BT_AVRCP_EVT_AVAILABLE_PLAYERS_CHANGED:
+	case BT_AVRCP_EVT_NOW_PLAYING_CONTENT_CHANGED:
+		break;
+	default:
+		if (data == NULL) {
+			return -EINVAL;
+		}
+		break;
+	}
+
+	if ((event_id == BT_AVRCP_EVT_PLAYER_APP_SETTING_CHANGED) &&
+	    (data->setting_changed.num_of_attr > 0U) && (data->setting_changed.attr_vals == NULL)) {
+		return -EINVAL;
+	}
+
 	/* Calculate parameter length based on event type */
 	switch (event_id) {
 	case BT_AVRCP_EVT_PLAYBACK_STATUS_CHANGED:

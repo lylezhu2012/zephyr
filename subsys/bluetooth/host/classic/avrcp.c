@@ -4041,6 +4041,10 @@ int bt_avrcp_ct_set_browsed_player(struct bt_avrcp_ct *ct, uint8_t tid, uint16_t
 	struct net_buf *buf;
 	int err;
 
+	if ((ct == NULL) || (ct->avrcp == NULL)) {
+		return -EINVAL;
+	}
+
 	if (avrcp_ct_cb->set_browsed_player == NULL) {
 		LOG_WRN("Rsp callback not registered");
 		return -EOPNOTSUPP;
@@ -4147,6 +4151,10 @@ int bt_avrcp_ct_get_total_number_of_items(struct bt_avrcp_ct *ct, uint8_t tid, u
 {
 	struct net_buf *buf;
 	int err;
+
+	if ((ct == NULL) || (ct->avrcp == NULL)) {
+		return -EINVAL;
+	}
 
 	if (scope > BT_AVRCP_SCOPE_NOW_PLAYING) {
 		return -EINVAL;
@@ -4262,6 +4270,10 @@ int bt_avrcp_tg_change_path(struct bt_avrcp_tg *tg, uint8_t tid, uint8_t status,
 	struct net_buf *buf;
 	int err;
 
+	if ((tg == NULL) || (tg->avrcp == NULL)) {
+		return -EINVAL;
+	}
+
 	buf = avrcp_create_browsing_pdu(tg->avrcp);
 	if (buf == NULL) {
 		return -ENOBUFS;
@@ -4354,6 +4366,10 @@ int bt_avrcp_tg_browsing_general_reject(struct bt_avrcp_tg *tg, uint8_t tid, uin
 {
 	struct net_buf *buf;
 	int err;
+
+	if ((tg == NULL) || (tg->avrcp == NULL)) {
+		return -EINVAL;
+	}
 
 	if (AVRCP_STATUS_IS_REJECTED(status) != true) {
 		LOG_ERR("Invalid status");

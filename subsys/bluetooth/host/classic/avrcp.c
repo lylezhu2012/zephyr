@@ -2642,10 +2642,10 @@ static void browsing_avrcp_disconnected(struct bt_avctp *session)
 {
 	struct bt_avrcp *avrcp = AVRCP_BROW_AVCTP(session);
 
-	if ((avrcp_ct_cb != NULL) && (avrcp_ct_cb->disconnected != NULL)) {
+	if ((avrcp_ct_cb != NULL) && (avrcp_ct_cb->browsing_disconnected != NULL)) {
 		avrcp_ct_cb->browsing_disconnected(get_avrcp_ct(avrcp));
 	}
-	if ((avrcp_tg_cb != NULL) && (avrcp_tg_cb->disconnected != NULL)) {
+	if ((avrcp_tg_cb != NULL) && (avrcp_tg_cb->browsing_disconnected != NULL)) {
 		avrcp_tg_cb->browsing_disconnected(get_avrcp_tg(avrcp));
 	}
 }

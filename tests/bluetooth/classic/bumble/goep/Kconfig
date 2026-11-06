@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+config TEST_GOEP_L2CAP
+	bool "Use GOEP over L2CAP instead of RFCOMM"
+	default n
+
+module = TEST_CLASSIC_GOEP_SIM
+module-str = test_classic_goep_sim
+source "subsys/logging/Kconfig.template.log_config"
+
+module = TEST_BR
+module-str = test_br
+source "subsys/logging/Kconfig.template.log_config"

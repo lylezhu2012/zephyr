@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright 2026 NXP
+# SPDX-License-Identifier: Apache-2.0
+
+common:
+  tags:
+    - bluetooth
+  platform_allow:
+    - native_sim
+  harness: ztest
+  sidecar: bumble
+  timeout: 300
+  sidecar_config:
+    bumble:
+      addresses:
+        - 00:00:01:00:00:01
+        - 00:00:01:00:00:02
+      devices:
+        - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_connect::*
+        - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_connect::*
+tests:
+  bluetooth.classic.sim.goep.connect.rfcomm: {}
+  bluetooth.classic.sim.goep.connect.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+  bluetooth.classic.sim.goep.put_get.rfcomm:
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_put_get::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_put_get::*
+  bluetooth.classic.sim.goep.misc.rfcomm:
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_misc::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_misc::*
+  bluetooth.classic.sim.goep.misc.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_misc::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_misc::*
+  bluetooth.classic.sim.goep.put_get.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_put_get::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_put_get::*

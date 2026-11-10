@@ -4145,12 +4145,15 @@ int bt_obex_tlv_parse(uint16_t len, const uint8_t *data,
 		return -EINVAL;
 	}
 
-	while ((index + 2) <= len) {
+	while (index < len) {
+		if ((len - index) < 2) {
+			return -EINVAL;
+		}
 		tlv.type = data[index];
 		tlv.data_len = data[index + 1];
 		index += 2;
 		if ((index + tlv.data_len) > len) {
-			break;
+			return -EINVAL;
 		}
 
 		tlv.data = &data[index];

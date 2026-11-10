@@ -92,6 +92,50 @@ static void empty_end_body(void)
 	zassert_equal(length, 0);
 }
 
+static bool count_tlv(struct bt_obex_tlv *tlv, void *user_data)
+{
+	size_t *count = user_data;
+
+	ARG_UNUSED(tlv);
+	(*count)++;
+	return true;
+}
+
+static bool stop_tlv(struct bt_obex_tlv *tlv, void *user_data)
+{
+	count_tlv(tlv, user_data);
+	return false;
+}
+
+static void truncated_tlv(void)
+{
+	static const uint8_t complete[] = {0, 0};
+	static const uint8_t short_header[] = {0};
+	static const uint8_t short_value[] = {0, 2, 0xaa};
+	static const uint8_t short_suffix[] = {0, 0, 0};
+	size_t count = 0;
+	int header_result;
+	int value_result;
+	int suffix_result;
+
+	test_goep_open();
+	zassert_equal(bt_obex_tlv_parse(0, complete, count_tlv, &count), -EINVAL);
+	zassert_ok(bt_obex_tlv_parse(sizeof(short_suffix), short_suffix, stop_tlv, &count));
+	zassert_equal(count, 1);
+	count = 0;
+	zassert_ok(bt_obex_tlv_parse(sizeof(complete), complete, count_tlv, &count));
+	zassert_equal(count, 1);
+	header_result = bt_obex_tlv_parse(sizeof(short_header), short_header, count_tlv, &count);
+	value_result = bt_obex_tlv_parse(sizeof(short_value), short_value, count_tlv, &count);
+	suffix_result = bt_obex_tlv_parse(sizeof(short_suffix), short_suffix, count_tlv, &count);
+	printk("CONTRACT TLV short_header=%d short_value=%d short_suffix=%d callbacks=%zu\n",
+	       header_result, value_result, suffix_result, count);
+	test_goep_close(false);
+	zassert_true(header_result < 0, "truncated TLV header accepted");
+	zassert_true(value_result < 0, "truncated TLV value accepted");
+	zassert_true(suffix_result < 0, "truncated TLV suffix accepted");
+}
+
 ZTEST(goep_client_contracts, test_ssn_encoding)
 {
 	sequence_header();
@@ -110,6 +154,16 @@ ZTEST(goep_client_contracts, test_empty_end_body)
 ZTEST(goep_server_contracts, test_empty_end_body)
 {
 	empty_end_body();
+}
+
+ZTEST(goep_client_contracts, test_truncated_tlv)
+{
+	truncated_tlv();
+}
+
+ZTEST(goep_server_contracts, test_truncated_tlv)
+{
+	truncated_tlv();
 }
 
 ZTEST_SUITE(goep_client_contracts, NULL, test_goep_client_setup, NULL, NULL, test_goep_teardown);

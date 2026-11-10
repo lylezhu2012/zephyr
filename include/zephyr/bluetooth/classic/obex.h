@@ -1608,10 +1608,12 @@ int bt_obex_get_header_conn_id(struct net_buf *buf, uint32_t *conn_id);
  *  @param data The data as given to the callback of OBEX server and client.
  *  @param func Callback function which will be called for each TLV triplet that's found from the
  *              @p data. The callback should return true to continue parsing, or false to stop
- *              parsing.
+ *              parsing successfully without validating the remaining bytes.
  *  @param user_data User data to be passed to the callback.
  *
- *  @return 0 in case of success or negative value in case of error.
+ *  @retval 0 All triplets parsed or the callback stopped parsing.
+ *  @retval -EINVAL Zero length, NULL data or callback, or a truncated triplet encountered
+ *                  before parsing stopped.
  */
 int bt_obex_tlv_parse(uint16_t len, const uint8_t *data,
 		      bool (*func)(struct bt_obex_tlv *tlv, void *user_data), void *user_data);

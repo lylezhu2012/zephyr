@@ -15,12 +15,14 @@
 #include <zephyr/kernel.h>
 
 #include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/buf.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/l2cap.h>
 #include <zephyr/bluetooth/classic/rfcomm.h>
 #include <zephyr/bluetooth/classic/sdp.h>
 #include <zephyr/bluetooth/classic/obex.h>
+#include <host/hci_core.h>
 
 #if defined(CONFIG_BT_OBEX_AUTH)
 #include <psa/crypto.h>
@@ -1105,6 +1107,12 @@ static void obex_client_restore_active_state(struct bt_obex_client *client,
 
 static void obex_client_req_complete(struct bt_obex_client *client)
 {
+	if (atomic_get(&client->_opcode) == BT_OBEX_OPCODE_ABORT) {
+		atomic_set_bit(&client->_flags, BT_OBEX_RSP_RECV);
+		atomic_clear(&client->_pre_opcode);
+		return;
+	}
+
 	obex_client_save_last_operation(client, (uint8_t)atomic_get(&client->_opcode));
 	obex_client_clear_active_state(client);
 }
@@ -1489,6 +1497,8 @@ static int obex_client_action_common(struct bt_obex_client *client, uint8_t rsp_
 		return -ENOTSUP;
 	}
 
+	atomic_set_bit(&client->_flags, BT_OBEX_RSP_RECV);
+
 	if (rsp_code != BT_OBEX_RSP_CODE_CONTINUE) {
 		obex_client_req_complete(client);
 	}
@@ -1517,9 +1527,75 @@ static int obex_client_session(struct bt_obex_client *client, uint8_t rsp_code, 
 
 static struct client_handler *obex_client_find_handler(uint8_t opcode);
 
+static struct k_spinlock obex_abort_lock;
+static K_MUTEX_DEFINE(obex_abort_cancel_lock);
+#define OBEX_ABORT_BUF_SIZE BT_BUF_ACL_SIZE(CONFIG_BT_BUF_ACL_RX_SIZE)
+NET_BUF_POOL_FIXED_DEFINE(obex_abort_pool, CONFIG_BT_MAX_CONN, OBEX_ABORT_BUF_SIZE, 0, NULL);
+
+static void obex_client_abort_cancel_timeout(struct bt_obex_client *client)
+{
+	static struct k_work_sync obex_abort_sync;
+
+	if (bt_is_work_thread()) {
+		(void)k_work_cancel_delayable(&client->_abort_timeout);
+	} else {
+		k_mutex_lock(&obex_abort_cancel_lock, K_FOREVER);
+		(void)k_work_cancel_delayable_sync(&client->_abort_timeout, &obex_abort_sync);
+		k_mutex_unlock(&obex_abort_cancel_lock);
+	}
+}
+
+static void obex_client_abort_cleanup(struct bt_obex_client *client)
+{
+	struct net_buf *buf;
+	k_spinlock_key_t key;
+
+	key = k_spin_lock(&obex_abort_lock);
+	buf = client->_abort_error;
+	client->_abort_error = NULL;
+	client->_abort_expired = true;
+	k_spin_unlock(&obex_abort_lock, key);
+	obex_client_abort_cancel_timeout(client);
+	if (buf != NULL) {
+		net_buf_unref(buf);
+	}
+}
+
+static void obex_client_abort_timeout(struct k_work *work)
+{
+	struct bt_obex_client *client = CONTAINER_OF(k_work_delayable_from_work(work),
+						   struct bt_obex_client, _abort_timeout);
+	struct bt_obex *obex;
+	struct net_buf *buf;
+	k_spinlock_key_t key;
+
+	key = k_spin_lock(&obex_abort_lock);
+	buf = client->_abort_error;
+	if (buf == NULL) {
+		k_spin_unlock(&obex_abort_lock, key);
+		return;
+	}
+	client->_abort_error = NULL;
+	client->_abort_expired = true;
+	obex = client->obex;
+	k_spin_unlock(&obex_abort_lock, key);
+	net_buf_unref(buf);
+	(void)obex_transport_disconn(obex);
+}
+
 static int obex_client_abort(struct bt_obex_client *client, uint8_t rsp_code, uint16_t len,
 			     struct net_buf *buf)
 {
+	uint8_t opcode = (uint8_t)atomic_get(&client->_pre_opcode);
+	struct net_buf *saved;
+	struct net_buf *copy = NULL;
+	uint8_t saved_code;
+	k_spinlock_key_t key;
+	const uint8_t *body;
+	uint16_t body_len;
+	bool get_response;
+	bool ambiguous_error;
+
 	LOG_DBG("");
 
 	if (len != buf->len) {
@@ -1532,11 +1608,81 @@ static int obex_client_abort(struct bt_obex_client *client, uint8_t rsp_code, ui
 		return -EINVAL;
 	}
 
-	if (len != 0) {
+	get_response = (opcode == BT_OBEX_OPCODE_GET || opcode == BT_OBEX_OPCODE_GET_F) &&
+		       (rsp_code == BT_OBEX_RSP_CODE_CONTINUE ||
+			bt_obex_get_header_end_body(buf, &body_len, &body) == 0);
+
+	ambiguous_error = !get_response &&
+		(opcode == BT_OBEX_OPCODE_GET || opcode == BT_OBEX_OPCODE_GET_F) &&
+		atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRM) &&
+		atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRM) &&
+		rsp_code != BT_OBEX_RSP_CODE_SUCCESS;
+	if (ambiguous_error && len <= OBEX_ABORT_BUF_SIZE) {
+		copy = net_buf_alloc(&obex_abort_pool, K_NO_WAIT);
+		if (copy != NULL) {
+			net_buf_add_mem(copy, buf->data, len);
+		}
+	}
+
+	key = k_spin_lock(&obex_abort_lock);
+	if (client->_abort_expired) {
+		k_spin_unlock(&obex_abort_lock, key);
+		if (copy != NULL) {
+			net_buf_unref(copy);
+		}
+		return 0;
+	}
+	saved = client->_abort_error;
+	saved_code = client->_abort_error_code;
+	client->_abort_error = NULL;
+	if (saved != NULL && (rsp_code != BT_OBEX_RSP_CODE_SUCCESS || get_response)) {
+		client->_abort_expired = true;
+	}
+	if (saved == NULL && ambiguous_error) {
+		if (copy == NULL) {
+			client->_abort_expired = true;
+			k_spin_unlock(&obex_abort_lock, key);
+			return obex_transport_disconn(client->obex);
+		}
+		client->_abort_error = copy;
+		client->_abort_error_code = rsp_code;
+		(void)bt_work_reschedule(&client->_abort_timeout, K_SECONDS(5));
+		k_spin_unlock(&obex_abort_lock, key);
+		return 0;
+	}
+	k_spin_unlock(&obex_abort_lock, key);
+	if (copy != NULL) {
+		net_buf_unref(copy);
+	}
+
+	if (saved != NULL) {
+		int err;
+
+		obex_client_abort_cancel_timeout(client);
+		if (rsp_code != BT_OBEX_RSP_CODE_SUCCESS || get_response) {
+			net_buf_unref(saved);
+			return obex_transport_disconn(client->obex);
+		}
+		err = obex_client_get_common(client, saved_code, saved->len, saved);
+		net_buf_unref(saved);
+		if (err != 0) {
+			return obex_transport_disconn(client->obex);
+		}
+		if (atomic_get(&client->_state) != BT_OBEX_CONNECTED ||
+		    atomic_get(&client->_opcode) != BT_OBEX_OPCODE_ABORT) {
+			return 0;
+		}
+	}
+
+	if (get_response ||
+	    (!atomic_test_bit(&client->_flags, BT_OBEX_RSP_RECV) &&
+	     !(atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRM) &&
+	       atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRM)) &&
+	     (len != 0 || rsp_code != BT_OBEX_RSP_CODE_SUCCESS))) {
 		struct client_handler *handler;
 		int err = -EINVAL;
 
-		handler = obex_client_find_handler(atomic_get(&client->_pre_opcode));
+		handler = obex_client_find_handler(opcode);
 		if (handler != NULL) {
 			err = handler->handler(client, rsp_code, len, buf);
 			if (err != 0) {
@@ -1685,6 +1831,11 @@ int bt_obex_transport_disconnected(struct bt_obex *obex)
 {
 	struct bt_obex_client *client, *cnext;
 	struct bt_obex_server *server, *snext;
+
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&obex->_clients, client, cnext, _node) {
+		atomic_set(&client->_state, BT_OBEX_DISCONNECTED);
+		obex_client_abort_cleanup(client);
+	}
 
 	obex->_transport_ops = NULL;
 	atomic_ptr_clear(&obex->_active_client);
@@ -1877,6 +2028,9 @@ int bt_obex_connect(struct bt_obex_client *client, uint16_t mopl, struct net_buf
 	}
 
 	client->rx.mopl = mopl;
+	k_work_init_delayable(&client->_abort_timeout, obex_client_abort_timeout);
+	client->_abort_error = NULL;
+	client->_abort_expired = false;
 	/* Set MOPL of TX to MTU by default to avoid the OBEX connect req cannot be sent. */
 	client->tx.mopl = BT_OBEX_MIN_MTU;
 	atomic_set(&client->_state, BT_OBEX_CONNECTING);
@@ -2653,7 +2807,7 @@ int bt_obex_abort(struct bt_obex_client *client, struct net_buf *buf)
 	}
 
 	opcode = atomic_set(&client->_opcode, BT_OBEX_OPCODE_ABORT);
-	pre_opcode = atomic_clear(&client->_pre_opcode);
+	pre_opcode = atomic_set(&client->_pre_opcode, opcode);
 
 	hdr = net_buf_push(buf, sizeof(*hdr));
 	hdr->code = BT_OBEX_OPCODE_ABORT;
@@ -2667,8 +2821,6 @@ int bt_obex_abort(struct bt_obex_client *client, struct net_buf *buf)
 		if (allocated) {
 			net_buf_unref(buf);
 		}
-	} else {
-		atomic_set(&client->_pre_opcode, opcode);
 	}
 	return err;
 }
@@ -2847,6 +2999,7 @@ int bt_obex_action(struct bt_obex_client *client, bool final, struct net_buf *bu
 	uint8_t req_code;
 	uint8_t opcode = 0;
 	bool allocated = false;
+	atomic_val_t flags;
 
 	if (client == NULL || client->obex == NULL) {
 		LOG_WRN("Invalid parameter");
@@ -2894,6 +3047,8 @@ int bt_obex_action(struct bt_obex_client *client, bool final, struct net_buf *bu
 		}
 	}
 
+	flags = atomic_get(&client->_flags);
+
 	if (buf == NULL) {
 		buf = obex_alloc_buf(client->obex);
 		if (buf == NULL) {
@@ -2908,12 +3063,15 @@ int bt_obex_action(struct bt_obex_client *client, bool final, struct net_buf *bu
 	hdr->code = req_code;
 	hdr->len = sys_cpu_to_be16(buf->len);
 
+	atomic_clear(&client->_flags);
+
 	err = obex_send(client->obex, client->tx.mopl, buf);
 	if (err == 0) {
 		return 0;
 	}
 
 failed:
+	atomic_set(&client->_flags, flags);
 	obex_client_restore_active_state(client, active_client, opcode);
 
 	if (allocated) {

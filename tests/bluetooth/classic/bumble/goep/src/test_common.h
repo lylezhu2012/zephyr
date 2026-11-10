@@ -19,15 +19,18 @@ enum test_goep_operation {
 
 extern struct bt_obex_client test_client;
 extern struct bt_obex_server test_server;
+extern void (*test_goep_get_hook)(void);
 
 void *test_goep_client_setup(void);
 void *test_goep_server_setup(void);
 void test_goep_teardown(void *fixture);
 void test_goep_open(void);
 void test_goep_close(bool server_initiated);
+void test_goep_expect_transport_closed(void);
 bool test_goep_is_client(void);
 struct net_buf *test_goep_pdu(void);
 void test_goep_send(int err, struct net_buf *buf);
+void test_goep_send_raw(struct net_buf *buf);
 struct net_buf *test_goep_expect(enum test_goep_operation operation, uint8_t status);
 
 #endif

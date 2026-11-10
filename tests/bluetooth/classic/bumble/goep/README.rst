@@ -22,7 +22,7 @@ Configurations
    * - ``bluetooth.classic.sim.goep.misc.{rfcomm,l2cap}``
      - 30
 
-The six configurations contain 33 paired scenarios, or 132 role/transport
+The six source-mapped configurations contain 33 paired scenarios, or 132 role/transport
 case executions in a complete run. Each pair repeats with fresh connections
 and both cleanup initiators; repetitions are not additional ztest cases.
 Explicit transport-disconnect scenarios independently exercise all four
@@ -32,6 +32,40 @@ Run from the west workspace parent, selecting the intended Zephyr checkout::
    export ZEPHYR_BASE=/path/to/zephyr
    west twister -p native_sim -T "$ZEPHYR_BASE/tests/bluetooth/classic/bumble/goep" \
        -O /path/to/fresh-output --inline-logs -v
+
+OBEX Regression Configurations
+******************************
+
+Five additional L2CAP configurations exercise the shared OBEX implementation:
+
+* ``api_helpers.l2cap``: eight role cases covering one-byte SSN encoding and decoding
+  (0, 127 and 255), adjacent headers, range/tailroom errors, empty versus missing
+  End-of-Body, truncated TLVs, callback-requested early stop and UUID registration.
+  The second-server registration assertion runs on the server; its client case
+  only coordinates connection lifecycle.
+* ``abort_empty.l2cap`` and ``abort_headers.l2cap``: two role cases each, checking
+  ABORT responses without headers and with exact Description bytes after a PUT Continue.
+* ``abort_matrix.l2cap``: twenty-six role cases covering pending PUT/GET responses,
+  a pending terminal GET response, GET/ACTION between packets, continued ACTION,
+  ACTION after a completed SRM PUT, SRM PUT and a legacy single empty response.
+  Additional GET vectors check an old empty error response, SRM Continue and
+  terminal responses (including an empty End-of-Body), and the SRM single-response control.
+  Each pair sends a fresh PUT after ABORT to check recovery.
+
+* ``abort_errors.l2cap``: fourteen role cases covering ambiguous SRM errors,
+  bounded failure, contradictory replies, response-header provenance and callback reentry.
+
+The full directory selects eleven configurations and 184 role/transport case executions.
+The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
+place old responses before the ABORT response. It does not inject private OBEX
+state, add fixed sleeps or increase timeouts. These are callback-routing regression
+vectors, not a claim that every response sequence is standards-conformant.
+An old terminal response and a legacy single ABORT response can have identical
+bytes, including optional Description headers. Without an already received old
+response, a single nonempty legacy response can still be attributed to the old
+operation. The single-empty-response control does not validate all legacy peers.
+That compatibility ambiguity, send-error rollback, callback reentry and sustained
+SRM GET traffic remain outside exhaustive coverage of this matrix.
 
 Assertions And Boundaries
 *************************
@@ -62,6 +96,13 @@ Assertions And Boundaries
 * Active ABORT follows a non-final PUT and Continue; idle ABORT checks the
   current implementation's ``-EINVAL``. SETPATH checks exact flags/name
   bytes and Success, Not Found or Forbidden responses.
+* The L2CAP ``abort_errors`` configuration covers a retained SRM GET error
+  followed by ABORT Success, a lone error with a five-second failure timeout,
+  contradictory replies, and failure after an identified GET terminal reply.
+  It also checks retained Description bytes and rejection of PUT reentry
+  from the GET callback while ABORT remains pending. These policy tests do
+  not establish legacy single/dual Success compatibility or exhaustive
+  timeout/transport-disconnection race coverage.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.
   Both transport-disconnected callbacks are checked before session reuse.

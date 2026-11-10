@@ -24,6 +24,20 @@ static struct bt_goep session;
 static struct bt_goep_transport transport;
 struct bt_obex_client test_client;
 struct bt_obex_server test_server;
+void (*test_goep_get_hook)(void);
+
+void test_goep_send_raw(struct net_buf *buf)
+{
+	int err;
+
+	if (IS_ENABLED(CONFIG_TEST_GOEP_L2CAP)) {
+		err = bt_l2cap_chan_send(&transport.v2.chan.chan, buf);
+	} else {
+		err = bt_rfcomm_dlc_send(&transport.v1.dlc, buf);
+	}
+	test_goep_send(err < 0 ? err : 0, buf);
+}
+
 enum connect_mode {
 	CONNECT_PLAIN,
 	CONNECT_TARGET,
@@ -207,7 +221,8 @@ struct net_buf *test_goep_expect(enum test_goep_operation operation, uint8_t sta
 	struct operation_event event;
 
 	zassert_ok(k_msgq_get(&operation_events, &event, TEST_BR_STEP_TIMEOUT));
-	zassert_equal(event.operation, operation);
+	zassert_equal(event.operation, operation, "operation %u, expected %u",
+		      event.operation, operation);
 	zassert_equal(event.status, status);
 	if (received_headers != NULL) {
 		net_buf_unref(received_headers);
@@ -308,6 +323,12 @@ static void client_get(struct bt_obex_client *obex_client, uint8_t rsp_code,
 		       struct net_buf *headers)
 {
 	zassert_equal_ptr(obex_client, &test_client);
+	if (test_goep_get_hook != NULL) {
+		void (*hook)(void) = test_goep_get_hook;
+
+		test_goep_get_hook = NULL;
+		hook();
+	}
 	record_operation(TEST_GOEP_GET, rsp_code, headers);
 }
 
@@ -594,6 +615,13 @@ void test_goep_close(bool server_initiated)
 	if (!test_goep_is_client()) {
 		zassert_ok(bt_obex_server_unregister(&test_server));
 	}
+}
+
+void test_goep_expect_transport_closed(void)
+{
+	wait_event(&transport_disconnected_sem);
+	zassert_equal(k_msgq_num_used_get(&operation_events), 0);
+	k_sem_give(&transport_disconnected_sem);
 }
 
 static void close_obex_session(bool server_initiated, bool explicit_transport)

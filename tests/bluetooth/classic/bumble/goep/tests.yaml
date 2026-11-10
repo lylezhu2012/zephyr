@@ -18,6 +18,28 @@ common:
         - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_connect::*
         - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_connect::*
 tests:
+  bluetooth.classic.sim.goep.abort_errors.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_abort_errors::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_abort_errors::*
+  bluetooth.classic.sim.goep.abort_matrix.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_abort_matrix::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_abort_matrix::*
   bluetooth.classic.sim.goep.api_helpers.l2cap:
     extra_configs:
       - CONFIG_TEST_GOEP_L2CAP=y
@@ -29,6 +51,36 @@ tests:
         devices:
           - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_contracts::*
           - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_contracts::*
+  bluetooth.classic.sim.goep.abort_empty.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - >-
+            --peer_bd_address=00:00:01:00:00:02
+            -test=goep_client_regressions::test_abort_empty_response_control
+          - >-
+            --peer_bd_address=00:00:01:00:00:01
+            -test=goep_server_regressions::test_abort_empty_response_control
+  bluetooth.classic.sim.goep.abort_headers.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - >-
+            --peer_bd_address=00:00:01:00:00:02
+            -test=goep_client_regressions::test_abort_description_response
+          - >-
+            --peer_bd_address=00:00:01:00:00:01
+            -test=goep_server_regressions::test_abort_description_response
   bluetooth.classic.sim.goep.connect.rfcomm: {}
   bluetooth.classic.sim.goep.connect.l2cap:
     extra_configs:

@@ -576,6 +576,15 @@ struct bt_obex_client {
 	/** @internal OBEX connection identifier */
 	uint32_t _conn_id;
 
+	/** @internal Deadline for an ambiguous SRM error response. */
+	struct k_work_delayable _abort_timeout;
+	/** @internal Retained response headers pending ABORT association. */
+	struct net_buf *_abort_error;
+	/** @internal Retained wire response code. */
+	uint8_t _abort_error_code;
+	/** @internal ABORT response association has failed. */
+	bool _abort_expired;
+
 	/** @internal sys snode */
 	sys_snode_t _node;
 };
@@ -857,6 +866,13 @@ int bt_obex_get_rsp(struct bt_obex_server *server, uint8_t rsp_code, struct net_
  *
  *  @note Buffer ownership is transferred to the stack in case of success, in case of an error
  *  the caller retains the ownership of the buffer.
+ *
+ *  @note During SRM GET cancellation, one ambiguous error response may be retained while
+ *  awaiting a subsequent ABORT response. A five-second timeout is armed when that error is
+ *  received. Expiry or a contradictory response initiates transport disconnection without
+ *  reporting ABORT success. This policy does not resolve legacy single/dual Success ambiguity.
+ *  Saved headers use an independent bounded pool sized from the connection count and ACL RX
+ *  capacity. Unavailable or insufficient storage initiates transport disconnection immediately.
  *
  *  @param client OBEX client object.
  *  @param buf Sequence of headers to be sent out.

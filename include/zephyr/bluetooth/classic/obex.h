@@ -1383,9 +1383,11 @@ int bt_obex_add_header_session_param(struct net_buf *buf, uint16_t len,
 /** @brief Add Header: sequence number used in each OBEX packet for reliability.
  *
  *  @param buf Buffer needs to be sent.
- *  @param session_seq_number Session sequence parameter.
+ *  @param session_seq_number One-byte sequence number, in the range 0 to 255.
  *
- *  @return 0 in case of success or negative value in case of error.
+ *  @retval 0 Header added successfully.
+ *  @retval -EINVAL NULL buffer or sequence number greater than 255.
+ *  @retval -ENOMEM Insufficient buffer tailroom for the two-byte header.
  */
 int bt_obex_add_header_session_seq_number(struct net_buf *buf, uint32_t session_seq_number);
 
@@ -1690,7 +1692,7 @@ int bt_obex_get_header_session_param(struct net_buf *buf, uint16_t *len,
 /** @brief Get header value: sequence number used in each OBEX packet for reliability.
  *
  *  @param buf Buffer needs to be sent.
- *  @param session_seq_number Session sequence parameter.
+ *  @param[out] session_seq_number One-byte sequence number widened to uint32_t, from 0 to 255.
  *
  *  @return 0 in case of success or negative value in case of error.
  */

@@ -3568,18 +3568,18 @@ int bt_obex_add_header_session_seq_number(struct net_buf *buf, uint32_t session_
 {
 	size_t total;
 
-	if (buf == NULL) {
-		LOG_WRN("Invalid buf");
+	if (buf == NULL || session_seq_number > UINT8_MAX) {
+		LOG_WRN("Invalid parameter");
 		return -EINVAL;
 	}
 
-	total = sizeof(uint8_t) + sizeof(session_seq_number);
+	total = sizeof(uint8_t) + sizeof(uint8_t);
 	if (net_buf_tailroom(buf) < total) {
 		return -ENOMEM;
 	}
 
 	net_buf_add_u8(buf, BT_OBEX_HEADER_ID_SESSION_SEQ_NUM);
-	net_buf_add_be32(buf, session_seq_number);
+	net_buf_add_u8(buf, (uint8_t)session_seq_number);
 	return 0;
 }
 
@@ -4426,11 +4426,11 @@ int bt_obex_get_header_session_seq_number(struct net_buf *buf, uint32_t *session
 		return err;
 	}
 
-	if ((data.hdr.len != sizeof(*session_seq_number)) || data.hdr.data == NULL) {
+	if ((data.hdr.len != sizeof(uint8_t)) || data.hdr.data == NULL) {
 		return -ENODATA;
 	}
 
-	*session_seq_number = sys_get_be32(data.hdr.data);
+	*session_seq_number = data.hdr.data[0];
 	return 0;
 }
 

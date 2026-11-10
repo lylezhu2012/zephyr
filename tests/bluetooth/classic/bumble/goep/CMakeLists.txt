@@ -11,4 +11,5 @@ target_sources(app PRIVATE
   src/test_connect.c
   src/test_put_get.c
   src/test_misc.c
+  src/test_regressions.c
 )

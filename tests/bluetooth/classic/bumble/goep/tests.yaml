@@ -18,6 +18,17 @@ common:
         - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_connect::*
         - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_connect::*
 tests:
+  bluetooth.classic.sim.goep.api_helpers.l2cap:
+    extra_configs:
+      - CONFIG_TEST_GOEP_L2CAP=y
+    sidecar_config:
+      bumble:
+        addresses:
+          - 00:00:01:00:00:01
+          - 00:00:01:00:00:02
+        devices:
+          - --peer_bd_address=00:00:01:00:00:02 -test=goep_client_contracts::*
+          - --peer_bd_address=00:00:01:00:00:01 -test=goep_server_contracts::*
   bluetooth.classic.sim.goep.connect.rfcomm: {}
   bluetooth.classic.sim.goep.connect.l2cap:
     extra_configs:

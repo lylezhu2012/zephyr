@@ -1564,9 +1564,12 @@ int bt_obex_get_header_body(struct net_buf *buf, uint16_t *len, const uint8_t **
 
 /** @brief Get header value: the final chunk of the object body.
  *
+ *  A present End-of-Body header with no body bytes succeeds with @p len set to zero.
+ *  A missing End-of-Body header returns -ENODATA.
+ *
  *  @param buf Buffer needs to be sent.
- *  @param len Length of body.
- *  @param body Object Body.
+ *  @param[out] len Length of body.
+ *  @param[out] body Body bytes in @p buf. Do not dereference when @p len is zero.
  *
  *  @return 0 in case of success or negative value in case of error.
  */

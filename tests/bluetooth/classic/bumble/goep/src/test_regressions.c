@@ -69,6 +69,29 @@ static void sequence_header(void)
 	zassert_equal(sequence, 0x7f);
 }
 
+static void empty_end_body(void)
+{
+	static const uint8_t valid[] = {0x49, 0, 3};
+	struct net_buf *buf;
+	const uint8_t *body = NULL;
+	uint16_t length = UINT16_MAX;
+	int absent_result;
+	int empty_result;
+
+	test_goep_open();
+	buf = test_goep_pdu();
+	absent_result = bt_obex_get_header_end_body(buf, &length, &body);
+	net_buf_add_mem(buf, valid, sizeof(valid));
+	empty_result = bt_obex_get_header_end_body(buf, &length, &body);
+	net_buf_unref(buf);
+	printk("CONTRACT EOB absent=%d present_empty=%d length=%u\n",
+	       absent_result, empty_result, length);
+	test_goep_close(false);
+	zassert_equal(absent_result, -ENODATA);
+	zassert_ok(empty_result, "present zero-length End-of-Body must succeed");
+	zassert_equal(length, 0);
+}
+
 ZTEST(goep_client_contracts, test_ssn_encoding)
 {
 	sequence_header();
@@ -77,6 +100,16 @@ ZTEST(goep_client_contracts, test_ssn_encoding)
 ZTEST(goep_server_contracts, test_ssn_encoding)
 {
 	sequence_header();
+}
+
+ZTEST(goep_client_contracts, test_empty_end_body)
+{
+	empty_end_body();
+}
+
+ZTEST(goep_server_contracts, test_empty_end_body)
+{
+	empty_end_body();
 }
 
 ZTEST_SUITE(goep_client_contracts, NULL, test_goep_client_setup, NULL, NULL, test_goep_teardown);

@@ -4068,7 +4068,7 @@ int bt_obex_get_header_end_body(struct net_buf *buf, uint16_t *len, const uint8_
 		return err;
 	}
 
-	if (data.hdr.len == 0 || data.hdr.data == NULL) {
+	if (!data.found) {
 		return -ENODATA;
 	}
 

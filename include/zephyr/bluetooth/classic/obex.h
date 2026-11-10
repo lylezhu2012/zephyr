@@ -618,8 +618,8 @@ struct bt_obex {
  *  Register a OBEX server with the specific UUID.
  *
  *  The OBEX object of the server should be set before calling the function.
- *  If the UUID is NULL, any connection request will be accepted. Or, the space of the UUID should
- *  be retained.
+ *  A NULL UUID is accepted only when no server is registered in the same OBEX object.
+ *  For a non-NULL UUID, its storage must remain valid while the server is registered.
  *  Before calling the API, @ref bt_obex_server::ops should be initialized with valid
  *  address of type @ref bt_obex_server_ops object. And the @ref bt_obex_server::obex should be
  *  initialized with the valid OBEX object of type @ref bt_obex.
@@ -628,6 +628,7 @@ struct bt_obex {
  *  @param uuid The UUID of the service.
  *
  *  @return 0 in case of success or negative value in case of error.
+ *  @retval -EINVAL NULL UUID when another server is already registered in the same OBEX object.
  */
 int bt_obex_server_register(struct bt_obex_server *server, const struct bt_uuid_128 *uuid);
 

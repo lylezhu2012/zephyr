@@ -136,6 +136,41 @@ static void truncated_tlv(void)
 	zassert_true(suffix_result < 0, "truncated TLV suffix accepted");
 }
 
+static void second_server(void)
+{
+	static const uint8_t first_name[] = "1111111111111111";
+	static const uint8_t second_name[] = "2222222222222222";
+	union bt_obex_uuid first_uuid;
+	union bt_obex_uuid second_uuid;
+	struct bt_obex local_obex = {0};
+	struct bt_obex_server first = {.obex = &local_obex};
+	struct bt_obex_server second = {.obex = &local_obex};
+	int second_result = 0;
+	int null_result = -EINVAL;
+
+	test_goep_open();
+	if (!test_goep_is_client()) {
+		first.ops = test_server.ops;
+		second.ops = test_server.ops;
+		zassert_ok(bt_obex_make_uuid(&first_uuid, first_name, sizeof(first_name) - 1));
+		zassert_ok(bt_obex_make_uuid(&second_uuid, second_name, sizeof(second_name) - 1));
+		zassert_ok(bt_obex_server_register(&first, &first_uuid.u128));
+		second_result = bt_obex_server_register(&second, &second_uuid.u128);
+		if (second_result == 0) {
+			zassert_ok(bt_obex_server_unregister(&second));
+			null_result = bt_obex_server_register(&second, NULL);
+			if (null_result == 0) {
+				zassert_ok(bt_obex_server_unregister(&second));
+			}
+		}
+		zassert_ok(bt_obex_server_unregister(&first));
+		printk("CONTRACT REGISTER first=0 second=%d\n", second_result);
+	}
+	test_goep_close(false);
+	zassert_ok(second_result, "second fresh UUID server must register");
+	zassert_equal(null_result, -EINVAL, "NULL parameter must not reuse stale UUID");
+}
+
 ZTEST(goep_client_contracts, test_ssn_encoding)
 {
 	sequence_header();
@@ -164,6 +199,16 @@ ZTEST(goep_client_contracts, test_truncated_tlv)
 ZTEST(goep_server_contracts, test_truncated_tlv)
 {
 	truncated_tlv();
+}
+
+ZTEST(goep_client_contracts, test_second_server)
+{
+	second_server();
+}
+
+ZTEST(goep_server_contracts, test_second_server)
+{
+	second_server();
 }
 
 ZTEST_SUITE(goep_client_contracts, NULL, test_goep_client_setup, NULL, NULL, test_goep_teardown);

@@ -349,6 +349,8 @@ static void abort_sequence(enum abort_sequence sequence)
 	bool between = sequence == ABORT_GET_BETWEEN || sequence == ABORT_ACTION_BETWEEN ||
 		       continued || srm;
 	bool legacy = sequence == ABORT_LEGACY_SINGLE;
+	bool ambiguous_success = legacy || sequence == ABORT_GET_SRM_SINGLE ||
+				 sequence == ABORT_GET_SRM_CONTINUE;
 	bool empty_abort = legacy;
 	bool old_response = (!between && !legacy) || continued ||
 			    (srm_get && sequence != ABORT_GET_SRM_SINGLE && !abort_failure);
@@ -453,6 +455,17 @@ static void abort_sequence(enum abort_sequence sequence)
 		}
 		buf = test_goep_pdu();
 		test_goep_send(bt_obex_abort(&test_client, buf), buf);
+		if (ambiguous_success) {
+			if (sequence == ABORT_GET_SRM_CONTINUE) {
+				buf = test_goep_expect(TEST_GOEP_GET, BT_OBEX_RSP_CODE_CONTINUE);
+				zassert_equal(buf->len, 4);
+			}
+			test_goep_expect_transport_closed();
+			zassert_true(k_uptime_get() - started < 5000,
+				     "Ambiguous Success waited for an error timeout");
+			test_goep_close(false);
+			return;
+		}
 		if (abort_failure) {
 			if (sequence == ABORT_GET_SRM_TERMINAL_FAILURE) {
 				buf = test_goep_expect(TEST_GOEP_GET, BT_OBEX_RSP_CODE_SUCCESS);
@@ -493,6 +506,27 @@ static void abort_sequence(enum abort_sequence sequence)
 		test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_SUCCESS);
 	} else {
 		buf = test_goep_expect(TEST_GOEP_ABORT, 0);
+		if (ambiguous_success) {
+			if (sequence == ABORT_GET_SRM_CONTINUE) {
+				buf = test_goep_pdu();
+				net_buf_add_u8(buf, BT_OBEX_RSP_CODE_CONTINUE);
+				net_buf_add_be16(buf, 7);
+				net_buf_add_u8(buf, 0x48);
+				net_buf_add_be16(buf, 4);
+				net_buf_add_u8(buf, 0x7b);
+				test_goep_send_raw(buf);
+			}
+			buf = test_goep_pdu();
+			net_buf_add_u8(buf, BT_OBEX_RSP_CODE_SUCCESS);
+			net_buf_add_be16(buf, legacy ? 3 : sizeof(expected) + 3);
+			if (!legacy) {
+				net_buf_add_mem(buf, expected, sizeof(expected));
+			}
+			test_goep_send_raw(buf);
+			test_goep_expect_transport_closed();
+			test_goep_close(false);
+			return;
+		}
 		if (abort_failure) {
 			int64_t started;
 
@@ -557,6 +591,269 @@ static void abort_sequence(enum abort_sequence sequence)
 		test_goep_send(bt_obex_put_rsp(&test_server, BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
 	}
 	test_goep_close(false);
+}
+
+static void ambiguous_put_response(bool description, bool dual, bool srm, bool after_close)
+{
+	static const uint8_t request_headers[] = {
+		0x01, 0, 7, 0, 'a', 0, 0, 0x49, 0, 4, 0x7b,
+	};
+	static const uint8_t response_headers[] = {0x05, 0, 7, 0, 'x', 0, 0};
+	struct net_buf *buf;
+	int64_t started;
+
+	test_goep_open();
+	if (srm) {
+		if (test_goep_is_client()) {
+			buf = test_goep_pdu();
+			zassert_ok(bt_obex_add_header_srm(buf, 1));
+			test_goep_send(bt_obex_put(&test_client, false, buf), buf);
+			buf = test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_CONTINUE);
+			zassert_equal(buf->len, 2);
+		} else {
+			test_goep_expect(TEST_GOEP_PUT, false);
+			buf = test_goep_pdu();
+			zassert_ok(bt_obex_add_header_srm(buf, 1));
+			test_goep_send(
+				bt_obex_put_rsp(&test_server, BT_OBEX_RSP_CODE_CONTINUE, buf), buf);
+		}
+	}
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		net_buf_add_mem(buf, request_headers, sizeof(request_headers));
+		test_goep_send(bt_obex_put(&test_client, true, buf), buf);
+	} else {
+		buf = test_goep_expect(TEST_GOEP_PUT, true);
+		zassert_equal(buf->len, sizeof(request_headers));
+		zassert_mem_equal(buf->data, request_headers, sizeof(request_headers));
+	}
+	test_br_sync();
+	started = k_uptime_get();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_abort(&test_client, buf), buf);
+	} else {
+		struct net_buf *responses[2];
+
+		buf = test_goep_expect(TEST_GOEP_ABORT, 0);
+		zassert_equal(buf->len, 0);
+		for (uint8_t response = 0; response < (dual ? 2 : 1); response++) {
+			buf = test_goep_pdu();
+			responses[response] = buf;
+			net_buf_add_u8(buf, BT_OBEX_RSP_CODE_SUCCESS);
+			net_buf_add_be16(buf, 3 + (description ? sizeof(response_headers) : 0));
+			if (description) {
+				net_buf_add_mem(buf, response_headers, sizeof(response_headers));
+			}
+		}
+		for (uint8_t response = 0; response < (dual ? 2 : 1); response++) {
+			int err = test_goep_try_send_raw(responses[response]);
+
+			if (err != 0) {
+				for (uint8_t pending = response; pending < (dual ? 2 : 1);
+				     pending++) {
+					net_buf_unref(responses[pending]);
+				}
+				zassert_equal(response, 1, "First Success send failed: %d", err);
+				zassert_equal(err, -ENOTCONN, "Unexpected second-send error");
+				test_goep_expect_transport_closed();
+				printk("GOEP_SUCCESS_SENDS submitted=1 cutoff=closed\n");
+				break;
+			}
+			zassert_false(after_close && response == 1,
+				      "Second send succeeded after confirmed closure");
+			printk("GOEP_SUCCESS_SENDS submitted=%u\n", response + 1U);
+			if (after_close && response == 0) {
+				test_goep_expect_transport_closed();
+			}
+		}
+	}
+	test_goep_expect_transport_closed();
+	zassert_true(k_uptime_get() - started < 5000,
+		     "Ambiguous Success did not fail immediately");
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_abort_matrix, test_final_put_single_empty)
+{
+	ambiguous_put_response(false, false, false, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_final_put_single_empty)
+{
+	ambiguous_put_response(false, false, false, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_final_put_dual_empty)
+{
+	ambiguous_put_response(false, true, false, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_final_put_dual_empty)
+{
+	ambiguous_put_response(false, true, false, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_final_put_single_description)
+{
+	ambiguous_put_response(true, false, false, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_final_put_single_description)
+{
+	ambiguous_put_response(true, false, false, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_final_put_dual_description)
+{
+	ambiguous_put_response(true, true, false, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_final_put_dual_description)
+{
+	ambiguous_put_response(true, true, false, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_srm_final_put_success)
+{
+	ambiguous_put_response(false, false, true, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_srm_final_put_success)
+{
+	ambiguous_put_response(false, false, true, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_final_put_dual_closed)
+{
+	ambiguous_put_response(false, true, false, true);
+}
+
+ZTEST(goep_server_abort_matrix, test_final_put_dual_closed)
+{
+	ambiguous_put_response(false, true, false, true);
+}
+
+static void abort_srmp_boundary(bool get, bool pending)
+{
+	enum test_goep_operation operation = get ? TEST_GOEP_GET : TEST_GOEP_PUT;
+	struct net_buf *buf;
+	uint8_t value;
+
+	test_goep_open();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_srm(buf, 1));
+		if (get) {
+			zassert_ok(bt_obex_add_header_srm_param(buf, 1));
+			test_goep_send(bt_obex_get(&test_client, true, buf), buf);
+		} else {
+			test_goep_send(bt_obex_put(&test_client, false, buf), buf);
+		}
+		buf = test_goep_expect(operation, BT_OBEX_RSP_CODE_CONTINUE);
+		zassert_ok(bt_obex_get_header_srm(buf, &value));
+		zassert_equal(value, 1);
+		if (!get) {
+			zassert_ok(bt_obex_get_header_srm_param(buf, &value));
+			zassert_equal(value, 1);
+		}
+	} else {
+		buf = test_goep_expect(operation, get);
+		zassert_ok(bt_obex_get_header_srm(buf, &value));
+		zassert_equal(value, 1);
+		if (get) {
+			zassert_ok(bt_obex_get_header_srm_param(buf, &value));
+			zassert_equal(value, 1);
+		}
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_srm(buf, 1));
+		if (get) {
+			test_goep_send(
+				bt_obex_get_rsp(&test_server, BT_OBEX_RSP_CODE_CONTINUE, buf), buf);
+		} else {
+			zassert_ok(bt_obex_add_header_srm_param(buf, 1));
+			test_goep_send(
+				bt_obex_put_rsp(&test_server, BT_OBEX_RSP_CODE_CONTINUE, buf), buf);
+		}
+	}
+	test_br_sync();
+	if (pending) {
+		if (test_goep_is_client()) {
+			buf = test_goep_pdu();
+			if (get) {
+				zassert_ok(bt_obex_add_header_srm_param(buf, 1));
+				test_goep_send(bt_obex_get(&test_client, true, buf), buf);
+			} else {
+				test_goep_send(bt_obex_put(&test_client, false, buf), buf);
+			}
+		} else {
+			test_goep_expect(operation, get);
+		}
+		test_br_sync();
+	}
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_abort(&test_client, buf), buf);
+	} else {
+		buf = test_goep_expect(TEST_GOEP_ABORT, 0);
+		zassert_equal(buf->len, 0);
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_abort_rsp(&test_server, BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
+	}
+	if (pending) {
+		test_goep_expect_transport_closed();
+	} else if (test_goep_is_client()) {
+		buf = test_goep_expect(TEST_GOEP_ABORT, BT_OBEX_RSP_CODE_SUCCESS);
+		zassert_equal(buf->len, 0);
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_put(&test_client, true, buf), buf);
+		test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_SUCCESS);
+	} else {
+		test_goep_expect(TEST_GOEP_PUT, true);
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_put_rsp(&test_server, BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
+	}
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_abort_matrix, test_srmp_put_boundary)
+{
+	abort_srmp_boundary(false, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_srmp_put_boundary)
+{
+	abort_srmp_boundary(false, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_srmp_get_boundary)
+{
+	abort_srmp_boundary(true, false);
+}
+
+ZTEST(goep_server_abort_matrix, test_srmp_get_boundary)
+{
+	abort_srmp_boundary(true, false);
+}
+
+ZTEST(goep_client_abort_matrix, test_srmp_put_pending)
+{
+	abort_srmp_boundary(false, true);
+}
+
+ZTEST(goep_server_abort_matrix, test_srmp_put_pending)
+{
+	abort_srmp_boundary(false, true);
+}
+
+ZTEST(goep_client_abort_matrix, test_srmp_get_pending)
+{
+	abort_srmp_boundary(true, true);
+}
+
+ZTEST(goep_server_abort_matrix, test_srmp_get_pending)
+{
+	abort_srmp_boundary(true, true);
 }
 
 ZTEST(goep_client_abort_matrix, test_put_pending)

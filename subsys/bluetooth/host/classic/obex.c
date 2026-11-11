@@ -1634,6 +1634,25 @@ static int obex_client_abort(struct bt_obex_client *client, uint8_t rsp_code, ui
 	}
 	saved = client->_abort_error;
 	saved_code = client->_abort_error_code;
+	if (saved == NULL && rsp_code == BT_OBEX_RSP_CODE_SUCCESS && !get_response &&
+	    (opcode == BT_OBEX_OPCODE_PUT || opcode == BT_OBEX_OPCODE_PUT_F ||
+	     opcode == BT_OBEX_OPCODE_GET || opcode == BT_OBEX_OPCODE_GET_F) &&
+	    !(opcode == BT_OBEX_OPCODE_PUT &&
+	      atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRM) &&
+	      atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRM) &&
+	      !atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRMP) &&
+	      !atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRMP)) &&
+	    (!atomic_test_bit(&client->_flags, BT_OBEX_RSP_RECV) ||
+	     (atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRM) &&
+		      atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRM) &&
+		      !(opcode == BT_OBEX_OPCODE_PUT &&
+			atomic_test_bit(&client->_flags, BT_OBEX_RSP_SRMP)) &&
+		      !((opcode == BT_OBEX_OPCODE_GET || opcode == BT_OBEX_OPCODE_GET_F) &&
+			atomic_test_bit(&client->_flags, BT_OBEX_REQ_SRMP))))) {
+		client->_abort_expired = true;
+		k_spin_unlock(&obex_abort_lock, key);
+		return obex_transport_disconn(client->obex);
+	}
 	client->_abort_error = NULL;
 	if (saved != NULL && (rsp_code != BT_OBEX_RSP_CODE_SUCCESS || get_response)) {
 		client->_abort_expired = true;

@@ -45,27 +45,40 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   only coordinates connection lifecycle.
 * ``abort_empty.l2cap`` and ``abort_headers.l2cap``: two role cases each, checking
   ABORT responses without headers and with exact Description bytes after a PUT Continue.
-* ``abort_matrix.l2cap``: twenty-six role cases covering pending PUT/GET responses,
+* ``abort_matrix.l2cap``: forty-six role cases covering pending PUT/GET responses,
   a pending terminal GET response, GET/ACTION between packets, continued ACTION,
   ACTION after a completed SRM PUT, SRM PUT and a legacy single empty response.
   Additional GET vectors check an old empty error response, SRM Continue and
   terminal responses (including an empty End-of-Body), and the SRM single-response control.
-  Each pair sends a fresh PUT after ABORT to check recovery.
+  Successful cancellation pairs send a fresh PUT to check recovery. Ambiguous Success
+  pairs instead require transport closure without guessed operation or ABORT callbacks.
+  Final-PUT vectors verify identical request headers for single/dual empty and Description
+  Success replies; a separate SRM final-PUT vector exercises the outstanding terminal boundary.
+  SRMP Wait controls distinguish a received PUT/GET Continue with no next request from
+  a newly sent request whose response remains pending. Only the former completes ABORT
+  and then checks a fresh PUT; the latter still requires transport closure.
 
 * ``abort_errors.l2cap``: fourteen role cases covering ambiguous SRM errors,
   bounded failure, contradictory replies, response-header provenance and callback reentry.
 
-The full directory selects eleven configurations and 184 role/transport case executions.
+The full directory selects eleven configurations and 204 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
 vectors, not a claim that every response sequence is standards-conformant.
 An old terminal response and a legacy single ABORT response can have identical
-bytes, including optional Description headers. Without an already received old
-response, a single nonempty legacy response can still be attributed to the old
-operation. The single-empty-response control does not validate all legacy peers.
-That compatibility ambiguity, send-error rollback, callback reentry and sustained
-SRM GET traffic remain outside exhaustive coverage of this matrix.
+bytes, including optional Description headers. With no proven response boundary,
+both single and dual indistinguishable Success sequences now fail closed rather
+than being guessed as successful cancellation. SRM GET Continue is still delivered
+as GET data, but it does not prove that a later Success belongs to ABORT. An identified
+GET End-of-Body and ordinary non-final SRM PUT remain separate positive controls.
+The dual-Success vectors distinguish two successful local submissions from a second send
+rejected with ``-ENOTCONN`` after the first response closes the transport. The latter also
+requires an actual transport-disconnected event and no operation callbacks; other send errors
+still fail. A separate event-driven control waits for closure before the second send.
+Submission counts are logged; neither outcome proves delivery of both responses to the client.
+Send-error rollback, multi-client isolation, callback reentry and sustained SRM GET
+traffic remain outside exhaustive coverage of this matrix.
 
 Assertions And Boundaries
 *************************
@@ -101,7 +114,7 @@ Assertions And Boundaries
   contradictory replies, and failure after an identified GET terminal reply.
   It also checks retained Description bytes and rejection of PUT reentry
   from the GET callback while ABORT remains pending. These policy tests do
-  not establish legacy single/dual Success compatibility or exhaustive
+  not establish universal legacy compatibility or exhaustive
   timeout/transport-disconnection race coverage.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.

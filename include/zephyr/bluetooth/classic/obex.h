@@ -870,7 +870,10 @@ int bt_obex_get_rsp(struct bt_obex_server *server, uint8_t rsp_code, struct net_
  *  @note During SRM GET cancellation, one ambiguous error response may be retained while
  *  awaiting a subsequent ABORT response. A five-second timeout is armed when that error is
  *  received. Expiry or a contradictory response initiates transport disconnection without
- *  reporting ABORT success. This policy does not resolve legacy single/dual Success ambiguity.
+ *  reporting ABORT success. An indistinguishable Success that may belong to an outstanding
+ *  PUT/GET response instead initiates transport disconnection immediately, without a guessed
+ *  operation or ABORT completion. This includes legacy single-response peers when no safe
+ *  response boundary is known. Disconnection affects every logical session on that transport.
  *  Saved headers use an independent bounded pool sized from the connection count and ACL RX
  *  capacity. Unavailable or insufficient storage initiates transport disconnection immediately.
  *

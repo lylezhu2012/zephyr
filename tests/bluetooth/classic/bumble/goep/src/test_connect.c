@@ -26,7 +26,7 @@ struct bt_obex_client test_client;
 struct bt_obex_server test_server;
 void (*test_goep_get_hook)(void);
 
-void test_goep_send_raw(struct net_buf *buf)
+int test_goep_try_send_raw(struct net_buf *buf)
 {
 	int err;
 
@@ -35,7 +35,12 @@ void test_goep_send_raw(struct net_buf *buf)
 	} else {
 		err = bt_rfcomm_dlc_send(&transport.v1.dlc, buf);
 	}
-	test_goep_send(err < 0 ? err : 0, buf);
+	return err < 0 ? err : 0;
+}
+
+void test_goep_send_raw(struct net_buf *buf)
+{
+	test_goep_send(test_goep_try_send_raw(buf), buf);
 }
 
 enum connect_mode {

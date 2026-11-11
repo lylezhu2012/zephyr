@@ -30,6 +30,7 @@ void test_goep_expect_transport_closed(void);
 bool test_goep_is_client(void);
 struct net_buf *test_goep_pdu(void);
 void test_goep_send(int err, struct net_buf *buf);
+int test_goep_try_send_raw(struct net_buf *buf);
 void test_goep_send_raw(struct net_buf *buf);
 struct net_buf *test_goep_expect(enum test_goep_operation operation, uint8_t status);
 

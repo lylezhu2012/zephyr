@@ -58,11 +58,12 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   a newly sent request whose response remains pending. Only the former completes ABORT
   and then checks a fresh PUT; the latter still requires transport closure.
 
-* ``abort_errors.l2cap``: eighteen role cases covering ambiguous SRM errors,
+* ``abort_errors.l2cap``: twenty role cases covering ambiguous SRM errors,
   bounded failure, contradictory replies, response-header provenance, callback reentry,
-  external ACL teardown during retention and role-object reuse without clearing memory.
+  external ACL teardown during retention, role-object reuse without clearing memory,
+  and two logical sessions sharing a transport.
 
-The full directory selects eleven configurations and 208 role/transport case executions.
+The full directory selects eleven configurations and 210 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
@@ -123,6 +124,14 @@ Assertions And Boundaries
   or establish every deadline interleaving. These policy tests do not establish universal
   legacy compatibility or exhaustive
   timeout/transport-disconnection race coverage.
+* The shared-transport pair establishes two Target sessions with Connection IDs 1 and 2
+  on one GOEP/L2CAP transport. The second session completes a PUT before the first session
+  encounters an ambiguous ABORT Success. Both logical sessions must become disconnected;
+  a new PUT on the idle sibling must fail with ``-ENOTCONN``. The original ACL and the
+  existing synchronization channel must remain usable until explicit ACL cleanup.
+  This covers one active session and one idle sibling, not simultaneous operations,
+  independent ACLs, arbitrary channels or shared-transport reuse. The fresh PUTs check
+  callback routing and API usability, not standards-valid object-transfer conformance.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.
   Both transport-disconnected callbacks are checked before session reuse.
@@ -133,8 +142,9 @@ Assertions And Boundaries
   rejection; only that result is retried within the existing connection
   timeout. Each transport open adopts the current ACL generation.
 
-Each host has one session and one peer. Concurrent connections, multiple
-instances, both ACL initiation roles, physical radios and filesystem effects
+Each host has one peer and normally one logical session; the shared-transport pair
+uses two logical sessions on the same transport. Concurrent ACL connections, simultaneous
+operations across sessions, both ACL initiation roles, physical radios and filesystem effects
 are outside this suite. The source server-view cases initiate their own ACL;
 this harness instead fixes ACL initiation to device 0 and retains both
 cleanup directions. Source L2CAP PSM 11 is replaced by the dynamic test PSM

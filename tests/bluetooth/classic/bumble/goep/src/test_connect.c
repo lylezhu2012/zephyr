@@ -369,6 +369,97 @@ static const struct bt_obex_client_ops client_ops = {
 	.setpath = client_setpath,
 };
 
+static struct bt_obex_client shared_client;
+static struct bt_obex_server shared_server;
+static union bt_obex_uuid shared_uuid;
+static const uint8_t shared_target_name[] = "8765432187654321";
+static atomic_t shared_put_completed;
+
+static void shared_server_connect(struct bt_obex_server *server, uint8_t version,
+				  uint16_t mopl, struct net_buf *headers)
+{
+	struct net_buf *buf = test_goep_pdu();
+	const uint8_t *target;
+	uint16_t length;
+
+	zassert_equal_ptr(server, &shared_server);
+	zassert_equal(version, 0x10);
+	zassert_equal(mopl, TEST_MOPL);
+	zassert_ok(bt_obex_get_header_target(headers, &length, &target));
+	zassert_equal(length, sizeof(shared_target_name) - 1);
+	zassert_mem_equal(target, shared_target_name, length);
+	zassert_ok(bt_obex_add_header_who(buf, length, target));
+	zassert_ok(bt_obex_add_header_conn_id(buf, 2));
+	test_goep_send(bt_obex_connect_rsp(server, BT_OBEX_RSP_CODE_SUCCESS, TEST_MOPL, buf),
+		       buf);
+	record_operation(TEST_GOEP_CONNECT, 0, headers);
+}
+
+static void shared_server_disconnect(struct bt_obex_server *server, struct net_buf *headers)
+{
+	ARG_UNUSED(headers);
+	zassert_equal_ptr(server, &shared_server);
+	zassert_unreachable("Unexpected shared-server OBEX disconnect callback");
+}
+
+static void shared_server_put(struct bt_obex_server *server, bool final, struct net_buf *headers)
+{
+	uint32_t conn_id;
+
+	zassert_equal_ptr(server, &shared_server);
+	zassert_ok(bt_obex_get_header_conn_id(headers, &conn_id));
+	zassert_equal(conn_id, 2);
+	record_operation(TEST_GOEP_PUT, final, headers);
+}
+
+static void shared_client_connect(struct bt_obex_client *client, uint8_t rsp_code,
+				  uint8_t version, uint16_t mopl, struct net_buf *headers)
+{
+	uint32_t conn_id;
+	const uint8_t *who;
+	uint16_t length;
+
+	zassert_equal_ptr(client, &shared_client);
+	zassert_equal(rsp_code, BT_OBEX_RSP_CODE_SUCCESS);
+	zassert_equal(version, 0x10);
+	zassert_equal(mopl, TEST_MOPL);
+	zassert_ok(bt_obex_get_header_conn_id(headers, &conn_id));
+	zassert_equal(conn_id, 2);
+	zassert_ok(bt_obex_get_header_who(headers, &length, &who));
+	zassert_equal(length, sizeof(shared_target_name) - 1);
+	zassert_mem_equal(who, shared_target_name, length);
+	record_operation(TEST_GOEP_CONNECT, rsp_code, headers);
+}
+
+static void shared_client_disconnect(struct bt_obex_client *client, uint8_t rsp_code,
+				     struct net_buf *headers)
+{
+	ARG_UNUSED(rsp_code);
+	ARG_UNUSED(headers);
+	zassert_equal_ptr(client, &shared_client);
+	zassert_unreachable("Unexpected shared-client OBEX disconnect callback");
+}
+
+static void shared_client_put(struct bt_obex_client *client, uint8_t rsp_code,
+			     struct net_buf *headers)
+{
+	zassert_equal_ptr(client, &shared_client);
+	atomic_set(&shared_put_completed, 1);
+	record_operation(TEST_GOEP_PUT, rsp_code, headers);
+}
+
+static const struct bt_obex_client_ops shared_client_ops = {
+	.connect = shared_client_connect,
+	.disconnect = shared_client_disconnect,
+	.put = shared_client_put,
+};
+
+static const struct bt_obex_server_ops shared_server_ops = {
+	.connect = shared_server_connect,
+	.disconnect = shared_server_disconnect,
+	.put = shared_server_put,
+};
+
 void *test_goep_client_setup(void)
 {
 	test_br_setup(TEST_BR_INITIATOR, BT_SECURITY_L2);
@@ -638,6 +729,109 @@ void test_goep_expect_transport_closed(void)
 	wait_event(&transport_disconnected_sem);
 	zassert_equal(k_msgq_num_used_get(&operation_events), 0);
 	k_sem_give(&transport_disconnected_sem);
+}
+
+static void shared_transport_abort(void)
+{
+	struct net_buf *buf;
+	struct bt_conn *acl;
+	int err;
+
+	atomic_set(&shared_put_completed, 0);
+	open_session(CONNECT_TARGET);
+	acl = test_br_conn();
+	if (test_goep_is_client()) {
+		memset(&shared_client, 0, sizeof(shared_client));
+		shared_client.obex = test_client.obex;
+		shared_client.ops = &shared_client_ops;
+	} else {
+		memset(&shared_server, 0, sizeof(shared_server));
+		shared_server.obex = test_server.obex;
+		shared_server.ops = &shared_server_ops;
+		zassert_ok(bt_obex_make_uuid(&shared_uuid, shared_target_name,
+					    sizeof(shared_target_name) - 1));
+		zassert_ok(bt_obex_server_register(&shared_server, &shared_uuid.u128));
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_target(buf, sizeof(shared_target_name) - 1,
+						    shared_target_name));
+		test_goep_send(bt_obex_connect(&shared_client, TEST_MOPL, buf), buf);
+		test_goep_expect(TEST_GOEP_CONNECT, BT_OBEX_RSP_CODE_SUCCESS);
+		zassert_equal_ptr(shared_client.obex, test_client.obex);
+		zassert_equal(atomic_get(&shared_client._state), BT_OBEX_CONNECTED);
+		zassert_equal(atomic_get(&test_client._state), BT_OBEX_CONNECTED);
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, 2));
+		test_goep_send(bt_obex_put(&shared_client, true, buf), buf);
+		test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_SUCCESS);
+		zassert_equal(atomic_get(&shared_put_completed), 1,
+			      "Shared client did not receive its PUT completion");
+	} else {
+		test_goep_expect(TEST_GOEP_CONNECT, 0);
+		test_goep_expect(TEST_GOEP_PUT, true);
+		zassert_equal_ptr(shared_server.obex, test_server.obex);
+		zassert_equal(atomic_get(&shared_server._state), BT_OBEX_CONNECTED);
+		zassert_equal(atomic_get(&test_server._state), BT_OBEX_CONNECTED);
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_put_rsp(&shared_server, BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, 1));
+		test_goep_send(bt_obex_put(&test_client, true, buf), buf);
+	} else {
+		test_goep_expect(TEST_GOEP_PUT, true);
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, 1));
+		test_goep_send(bt_obex_abort(&test_client, buf), buf);
+	} else {
+		test_goep_expect(TEST_GOEP_ABORT, 0);
+		buf = test_goep_pdu();
+		net_buf_add_u8(buf, BT_OBEX_RSP_CODE_SUCCESS);
+		net_buf_add_be16(buf, 3);
+		test_goep_send_raw(buf);
+	}
+	test_goep_expect_transport_closed();
+	if (test_goep_is_client()) {
+		zassert_equal(atomic_get(&test_client._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_client._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_client._opcode), 0);
+		zassert_equal(atomic_get(&shared_client._pre_opcode), 0);
+		zassert_is_null(shared_client._abort_error);
+		zassert_false(k_work_delayable_is_pending(&shared_client._abort_timeout));
+		zassert_true(sys_slist_is_empty(&session.obex._clients));
+		buf = test_goep_pdu();
+		err = bt_obex_put(&shared_client, true, buf);
+		if (err != 0) {
+			net_buf_unref(buf);
+		}
+		zassert_equal(err, -ENOTCONN);
+	} else {
+		zassert_equal(atomic_get(&test_server._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_server._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_server._opcode), 0);
+		zassert_ok(bt_obex_server_unregister(&shared_server));
+	}
+	zassert_true(test_br_connected());
+	zassert_equal_ptr(test_br_conn(), acl);
+	test_br_sync();
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_abort_errors, test_shared_transport_abort)
+{
+	shared_transport_abort();
+}
+
+ZTEST(goep_server_abort_errors, test_shared_transport_abort)
+{
+	shared_transport_abort();
 }
 
 static void close_obex_session(bool server_initiated, bool explicit_transport)

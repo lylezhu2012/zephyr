@@ -25,6 +25,7 @@ void *test_goep_client_setup(void);
 void *test_goep_server_setup(void);
 void test_goep_teardown(void *fixture);
 void test_goep_open(void);
+void test_goep_reopen(void);
 void test_goep_close(bool server_initiated);
 void test_goep_expect_transport_closed(void);
 bool test_goep_is_client(void);

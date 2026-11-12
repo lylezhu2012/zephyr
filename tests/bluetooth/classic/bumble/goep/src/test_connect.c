@@ -49,6 +49,7 @@ enum connect_mode {
 	CONNECT_SERVER_AUTH_1234,
 	CONNECT_SERVER_AUTH_0000,
 	CONNECT_CLIENT_AUTH,
+	CONNECT_REUSE,
 };
 
 static bool with_connection_id;
@@ -556,11 +557,15 @@ static void open_session(enum connect_mode mode)
 			 mode == CONNECT_CLIENT_AUTH;
 	open_transport();
 	if (test_goep_is_client()) {
-		memset(&test_client, 0, sizeof(test_client));
+		if (mode != CONNECT_REUSE) {
+			memset(&test_client, 0, sizeof(test_client));
+		}
 		test_client.obex = &session.obex;
 		test_client.ops = &client_ops;
 	} else {
-		memset(&test_server, 0, sizeof(test_server));
+		if (mode != CONNECT_REUSE) {
+			memset(&test_server, 0, sizeof(test_server));
+		}
 		test_server.obex = &session.obex;
 		test_server.ops = &server_ops;
 		if (with_connection_id) {
@@ -591,6 +596,11 @@ void test_goep_open(void)
 	open_session(CONNECT_PLAIN);
 }
 
+void test_goep_reopen(void)
+{
+	open_session(CONNECT_REUSE);
+}
+
 static void close_acl(bool server_initiated)
 {
 	int err;
@@ -616,6 +626,7 @@ void test_goep_close(bool server_initiated)
 	}
 	close_acl(server_initiated);
 	wait_event(&transport_disconnected_sem);
+	zassert_equal(k_msgq_num_used_get(&operation_events), 0);
 	zassert_equal(k_sem_count_get(&obex_disconnected_sem), 0);
 	if (!test_goep_is_client()) {
 		zassert_ok(bt_obex_server_unregister(&test_server));

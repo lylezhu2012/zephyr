@@ -58,10 +58,11 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   a newly sent request whose response remains pending. Only the former completes ABORT
   and then checks a fresh PUT; the latter still requires transport closure.
 
-* ``abort_errors.l2cap``: fourteen role cases covering ambiguous SRM errors,
-  bounded failure, contradictory replies, response-header provenance and callback reentry.
+* ``abort_errors.l2cap``: eighteen role cases covering ambiguous SRM errors,
+  bounded failure, contradictory replies, response-header provenance, callback reentry,
+  external ACL teardown during retention and role-object reuse without clearing memory.
 
-The full directory selects eleven configurations and 204 role/transport case executions.
+The full directory selects eleven configurations and 208 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
@@ -113,8 +114,14 @@ Assertions And Boundaries
   followed by ABORT Success, a lone error with a five-second failure timeout,
   contradictory replies, and failure after an identified GET terminal reply.
   It also checks retained Description bytes and rejection of PUT reentry
-  from the GET callback while ABORT remains pending. These policy tests do
-  not establish universal legacy compatibility or exhaustive
+  from the GET callback while ABORT remains pending. External-teardown vectors first
+  observe the retained error and pending work, then hold an extra buffer reference across
+  peer-initiated ACL closure. They require no operation callbacks, a cleared saved pointer,
+  cancelled work and release of the retained reference. The reuse control reconnects the
+  same client/server objects without ``memset`` and completes a fresh PUT; the session and
+  transport are still reinitialized. These read-only state observations do not inject state
+  or establish every deadline interleaving. These policy tests do not establish universal
+  legacy compatibility or exhaustive
   timeout/transport-disconnection race coverage.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.

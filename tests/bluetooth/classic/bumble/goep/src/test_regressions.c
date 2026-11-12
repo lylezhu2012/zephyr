@@ -301,6 +301,8 @@ enum abort_sequence {
 	ABORT_GET_SRM_TERMINAL_FAILURE,
 	ABORT_GET_SRM_ERROR_HEADERS,
 	ABORT_GET_SRM_ERROR_REENTRY,
+	ABORT_GET_SRM_ERROR_DISCONNECT,
+	ABORT_GET_SRM_ERROR_DISCONNECT_REUSE,
 	ABORT_GET_BETWEEN,
 	ABORT_ACTION_BETWEEN,
 	ABORT_ACTION_CONTINUED,
@@ -335,7 +337,9 @@ static void abort_sequence(enum abort_sequence sequence)
 		       sequence == ABORT_GET_SRM_ERROR_CONTINUE ||
 		       sequence == ABORT_GET_SRM_TERMINAL_FAILURE ||
 		       sequence == ABORT_GET_SRM_ERROR_HEADERS ||
-		       sequence == ABORT_GET_SRM_ERROR_REENTRY;
+		       sequence == ABORT_GET_SRM_ERROR_REENTRY ||
+		       sequence == ABORT_GET_SRM_ERROR_DISCONNECT ||
+		       sequence == ABORT_GET_SRM_ERROR_DISCONNECT_REUSE;
 	bool abort_failure = sequence == ABORT_GET_SRM_FAILURE ||
 			     sequence == ABORT_GET_SRM_REPEATED_ERROR ||
 			     sequence == ABORT_GET_SRM_ERROR_CONTINUE ||
@@ -447,6 +451,61 @@ static void abort_sequence(enum abort_sequence sequence)
 		}
 	}
 	test_br_sync();
+	if (sequence == ABORT_GET_SRM_ERROR_DISCONNECT ||
+	    sequence == ABORT_GET_SRM_ERROR_DISCONNECT_REUSE) {
+		if (test_goep_is_client()) {
+			buf = test_goep_pdu();
+			test_goep_send(bt_obex_abort(&test_client, buf), buf);
+		} else {
+			test_goep_expect(TEST_GOEP_ABORT, 0);
+			buf = test_goep_pdu();
+			net_buf_add_u8(buf, BT_OBEX_RSP_CODE_FORBIDDEN);
+			net_buf_add_be16(buf, sizeof(error_headers) + 3);
+			net_buf_add_mem(buf, error_headers, sizeof(error_headers));
+			test_goep_send_raw(buf);
+		}
+		test_br_sync();
+		if (test_goep_is_client()) {
+			struct net_buf *saved;
+
+			zassert_not_null(test_client._abort_error, "Error was not retained");
+			zassert_true(k_work_delayable_is_pending(&test_client._abort_timeout));
+			saved = net_buf_ref(test_client._abort_error);
+			zassert_equal(saved->ref, 2);
+			zassert_equal(saved->len, sizeof(error_headers));
+			zassert_mem_equal(saved->data, error_headers, sizeof(error_headers));
+			test_goep_close(true);
+			zassert_is_null(test_client._abort_error);
+			zassert_false(k_work_delayable_is_pending(&test_client._abort_timeout));
+			zassert_true(test_client._abort_expired);
+			zassert_equal(atomic_get(&test_client._opcode), 0);
+			zassert_equal(atomic_get(&test_client._pre_opcode), 0);
+			zassert_equal(saved->ref, 1, "Retained reference leaked on disconnect");
+			net_buf_unref(saved);
+		} else {
+			test_goep_close(true);
+		}
+		if (sequence == ABORT_GET_SRM_ERROR_DISCONNECT_REUSE) {
+			test_goep_reopen();
+			if (test_goep_is_client()) {
+				zassert_is_null(test_client._abort_error);
+				zassert_false(test_client._abort_expired);
+				zassert_false(k_work_delayable_is_pending(
+					&test_client._abort_timeout));
+				buf = test_goep_pdu();
+				test_goep_send(bt_obex_put(&test_client, true, buf), buf);
+				test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_SUCCESS);
+			} else {
+				test_goep_expect(TEST_GOEP_PUT, true);
+				buf = test_goep_pdu();
+				test_goep_send(
+					bt_obex_put_rsp(&test_server,
+							BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
+			}
+			test_goep_close(false);
+		}
+		return;
+	}
 	if (test_goep_is_client()) {
 		int64_t started = k_uptime_get();
 
@@ -1034,6 +1093,26 @@ ZTEST(goep_client_abort_errors, test_error_reentry)
 ZTEST(goep_server_abort_errors, test_error_reentry)
 {
 	abort_sequence(ABORT_GET_SRM_ERROR_REENTRY);
+}
+
+ZTEST(goep_client_abort_errors, test_error_external_disconnect)
+{
+	abort_sequence(ABORT_GET_SRM_ERROR_DISCONNECT);
+}
+
+ZTEST(goep_server_abort_errors, test_error_external_disconnect)
+{
+	abort_sequence(ABORT_GET_SRM_ERROR_DISCONNECT);
+}
+
+ZTEST(goep_client_abort_errors, test_error_external_disconnect_reuse)
+{
+	abort_sequence(ABORT_GET_SRM_ERROR_DISCONNECT_REUSE);
+}
+
+ZTEST(goep_server_abort_errors, test_error_external_disconnect_reuse)
+{
+	abort_sequence(ABORT_GET_SRM_ERROR_DISCONNECT_REUSE);
 }
 
 ZTEST_SUITE(goep_server_abort_errors, NULL, test_goep_server_setup, NULL, NULL, test_goep_teardown);

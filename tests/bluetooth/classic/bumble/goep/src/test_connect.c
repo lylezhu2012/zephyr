@@ -28,6 +28,9 @@ NET_BUF_POOL_FIXED_DEFINE(tx_pool, 4, 1024, CONFIG_BT_CONN_TX_USER_DATA_SIZE, NU
 
 static struct bt_goep session;
 static struct bt_goep_transport transport;
+static unsigned int session_init_count;
+static atomic_t transport_disconnections;
+static atomic_t primary_put_completed;
 struct bt_obex_client test_client;
 struct bt_obex_server test_server;
 void (*test_goep_get_hook)(void);
@@ -77,6 +80,15 @@ static K_SEM_DEFINE(transport_connected_sem, 0, 1);
 static K_SEM_DEFINE(transport_disconnected_sem, 0, 1);
 static K_SEM_DEFINE(obex_connected_sem, 0, 1);
 static K_SEM_DEFINE(obex_disconnected_sem, 0, 1);
+static K_SEM_DEFINE(reuse_deadline_elapsed_sem, 0, 1);
+
+static void reuse_deadline_elapsed(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+	k_sem_give(&reuse_deadline_elapsed_sem);
+}
+
+K_TIMER_DEFINE(reuse_deadline_timer, reuse_deadline_elapsed, NULL);
 
 static void wait_event(struct k_sem *sem)
 {
@@ -93,6 +105,11 @@ static void transport_connected(struct bt_conn *conn, struct bt_goep *goep)
 static void transport_disconnected(struct bt_goep *goep)
 {
 	zassert_equal_ptr(goep, &session);
+	if (IS_ENABLED(CONFIG_TEST_GOEP_L2CAP)) {
+		zassert_is_null(transport.v2.chan.chan.conn);
+		zassert_equal(transport.v2.chan.state, BT_L2CAP_DISCONNECTED);
+	}
+	atomic_inc(&transport_disconnections);
 	k_sem_give(&transport_disconnected_sem);
 }
 
@@ -103,6 +120,7 @@ static const struct bt_goep_transport_ops transport_ops = {
 
 static void session_init(void)
 {
+	session_init_count++;
 	memset(&session, 0, sizeof(session));
 	memset(&transport, 0, sizeof(transport));
 	session.transport_ops = &transport_ops;
@@ -766,6 +784,7 @@ static void client_put(struct bt_obex_client *obex_client, uint8_t rsp_code,
 		       struct net_buf *headers)
 {
 	zassert_equal_ptr(obex_client, &test_client);
+	atomic_set(&primary_put_completed, 1);
 	record_operation(TEST_GOEP_PUT, rsp_code, headers);
 }
 
@@ -1276,6 +1295,204 @@ ZTEST(goep_client_abort_errors, test_shared_transport_abort)
 ZTEST(goep_server_abort_errors, test_shared_transport_abort)
 {
 	shared_transport_abort();
+}
+
+static void reuse_session_connect(bool sibling)
+{
+	struct net_buf *buf;
+	struct bt_obex_client *client = sibling ? &shared_client : &test_client;
+	const uint8_t *target = sibling ? shared_target_name : target_name;
+
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_target(buf, sizeof(target_name) - 1, target));
+		test_goep_send(bt_obex_connect(client, TEST_MOPL, buf), buf);
+	}
+	if (sibling) {
+		test_goep_expect(TEST_GOEP_CONNECT,
+				 test_goep_is_client() ? BT_OBEX_RSP_CODE_SUCCESS : 0);
+	} else {
+		wait_event(&obex_connected_sem);
+	}
+}
+
+static void reuse_session_put(bool sibling)
+{
+	struct net_buf *buf;
+	atomic_t *completed = sibling ? &shared_put_completed : &primary_put_completed;
+
+	if (test_goep_is_client()) {
+		atomic_set(completed, 0);
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, sibling ? 2 : 1));
+		test_goep_send(bt_obex_put(sibling ? &shared_client : &test_client, true, buf),
+			       buf);
+		test_goep_expect(TEST_GOEP_PUT, BT_OBEX_RSP_CODE_SUCCESS);
+		zassert_equal(atomic_get(completed), 1);
+	} else {
+		test_goep_expect(TEST_GOEP_PUT, true);
+		buf = test_goep_pdu();
+		test_goep_send(bt_obex_put_rsp(sibling ? &shared_server : &test_server,
+					       BT_OBEX_RSP_CODE_SUCCESS, buf),
+			       buf);
+	}
+}
+
+static void shared_transport_reuse(void)
+{
+	struct net_buf *saved = NULL;
+	struct net_buf *buf;
+	struct bt_conn *acl;
+	k_ticks_t old_deadline = 0;
+	unsigned int init_count;
+	atomic_val_t disconnected_count;
+	uint8_t srm;
+
+	open_session(CONNECT_TARGET);
+	acl = test_br_conn();
+	init_count = session_init_count;
+	disconnected_count = atomic_get(&transport_disconnections);
+	if (test_goep_is_client()) {
+		memset(&shared_client, 0, sizeof(shared_client));
+		shared_client.obex = &session.obex;
+		shared_client.ops = &shared_client_ops;
+	} else {
+		memset(&shared_server, 0, sizeof(shared_server));
+		shared_server.obex = &session.obex;
+		shared_server.ops = &shared_server_ops;
+		zassert_ok(bt_obex_make_uuid(&shared_uuid, shared_target_name,
+					     sizeof(shared_target_name) - 1));
+		zassert_ok(bt_obex_server_register(&shared_server, &shared_uuid.u128));
+	}
+	test_br_sync();
+	reuse_session_connect(true);
+	reuse_session_put(true);
+	if (test_goep_is_client()) {
+		zassert_equal(bt_goep_transport_l2cap_connect(acl, &session, TEST_PSM), -EBUSY);
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, 1));
+		zassert_ok(bt_obex_add_header_srm(buf, 1));
+		test_goep_send(bt_obex_get(&test_client, true, buf), buf);
+		buf = test_goep_expect(TEST_GOEP_GET, BT_OBEX_RSP_CODE_CONTINUE);
+		zassert_ok(bt_obex_get_header_srm(buf, &srm));
+		zassert_equal(srm, 1);
+	} else {
+		test_goep_expect(TEST_GOEP_GET, true);
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_srm(buf, 1));
+		test_goep_send(bt_obex_get_rsp(&test_server, BT_OBEX_RSP_CODE_CONTINUE, buf), buf);
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		buf = test_goep_pdu();
+		zassert_ok(bt_obex_add_header_conn_id(buf, 1));
+		test_goep_send(bt_obex_abort(&test_client, buf), buf);
+	} else {
+		test_goep_expect(TEST_GOEP_ABORT, 0);
+		buf = test_goep_pdu();
+		net_buf_add_u8(buf, BT_OBEX_RSP_CODE_FORBIDDEN);
+		net_buf_add_be16(buf, 3);
+		test_goep_send_raw(buf);
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_not_null(test_client._abort_error);
+		zassert_true(k_work_delayable_is_pending(&test_client._abort_timeout));
+		old_deadline = k_work_delayable_expires_get(&test_client._abort_timeout);
+		zassert_true(old_deadline > k_uptime_ticks());
+		saved = net_buf_ref(test_client._abort_error);
+		zassert_equal(saved->ref, 2);
+	}
+	test_br_sync();
+	if (!test_goep_is_client()) {
+		buf = test_goep_pdu();
+		net_buf_add_u8(buf, BT_OBEX_RSP_CODE_FORBIDDEN);
+		net_buf_add_be16(buf, 3);
+		test_goep_send_raw(buf);
+	}
+	wait_event(&transport_disconnected_sem);
+	zassert_equal(atomic_get(&transport_disconnections), disconnected_count + 1);
+	zassert_equal(atomic_get(&session._state), BT_GOEP_TRANSPORT_DISCONNECTED);
+	if (test_goep_is_client()) {
+		zassert_is_null(test_client._abort_error);
+		zassert_false(k_work_delayable_is_pending(&test_client._abort_timeout));
+		zassert_equal(saved->ref, 1);
+		net_buf_unref(saved);
+		zassert_equal(atomic_get(&test_client._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_client._state), BT_OBEX_DISCONNECTED);
+	} else {
+		zassert_equal(atomic_get(&test_server._state), BT_OBEX_DISCONNECTED);
+		zassert_equal(atomic_get(&shared_server._state), BT_OBEX_DISCONNECTED);
+		zassert_is_null(atomic_ptr_get(&session.obex._active_server),
+				"Old server route survived transport teardown");
+		zassert_equal(bt_obex_server_register(&test_server, &target_uuid.u128), -EALREADY);
+		zassert_equal(bt_obex_server_register(&shared_server, &shared_uuid.u128),
+			      -EALREADY);
+	}
+	zassert_not_null(transport.v2.chan.chan.ops->released);
+	transport.v2.chan.chan.ops->released(&transport.v2.chan.chan);
+	zassert_equal(atomic_get(&transport_disconnections), disconnected_count + 1);
+	zassert_equal(k_sem_count_get(&transport_disconnected_sem), 0);
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_ok(bt_goep_transport_l2cap_connect(acl, &session, TEST_PSM + 2));
+		wait_event(&transport_disconnected_sem);
+		zassert_equal(atomic_get(&transport_disconnections), disconnected_count + 2);
+		zassert_equal(atomic_get(&session._state), BT_GOEP_TRANSPORT_DISCONNECTED);
+	}
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_ok(bt_goep_transport_l2cap_connect(acl, &session, TEST_PSM));
+	}
+	wait_event(&transport_connected_sem);
+	zassert_equal(session_init_count, init_count);
+	zassert_equal_ptr(session.v2, &transport.v2);
+	zassert_equal_ptr(transport.v2.goep, &session);
+	reuse_session_connect(false);
+	reuse_session_connect(true);
+	if (test_goep_is_client()) {
+		zassert_true(k_uptime_ticks() < old_deadline);
+	}
+	reuse_session_put(false);
+	reuse_session_put(true);
+	if (test_goep_is_client()) {
+		int64_t remaining = old_deadline - k_uptime_ticks();
+
+		zassert_true(remaining > 0);
+		k_timer_start(&reuse_deadline_timer, K_TICKS(remaining + 1), K_NO_WAIT);
+		wait_event(&reuse_deadline_elapsed_sem);
+		zassert_true(k_uptime_ticks() > old_deadline);
+		zassert_equal(atomic_get(&test_client._state), BT_OBEX_CONNECTED);
+		zassert_equal(atomic_get(&shared_client._state), BT_OBEX_CONNECTED);
+		zassert_equal(k_msgq_num_used_get(&operation_events), 0);
+	}
+	test_br_sync();
+	reuse_session_put(false);
+	reuse_session_put(true);
+	zassert_equal(session_init_count, init_count);
+	zassert_true(test_br_connected());
+	zassert_equal_ptr(test_br_conn(), acl);
+	disconnected_count = atomic_get(&transport_disconnections);
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_ok(bt_goep_transport_l2cap_disconnect(&session));
+	}
+	test_goep_expect_transport_closed();
+	zassert_equal(atomic_get(&transport_disconnections), disconnected_count + 1);
+	if (!test_goep_is_client()) {
+		zassert_ok(bt_obex_server_unregister(&shared_server));
+	}
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_abort_errors, test_shared_transport_reuse)
+{
+	shared_transport_reuse();
+}
+
+ZTEST(goep_server_abort_errors, test_shared_transport_reuse)
+{
+	shared_transport_reuse();
 }
 
 static void close_obex_session(bool server_initiated, bool explicit_transport)

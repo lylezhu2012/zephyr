@@ -368,11 +368,27 @@ static void goep_l2cap_disconnected(struct bt_l2cap_chan *chan)
 
 	LOG_DBG("L2CAP channel %p disconnected", chan);
 
-	atomic_set(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTED);
+	atomic_set(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTING);
 
 	err = bt_obex_transport_disconnected(&goep->obex);
 	if (err != 0) {
 		LOG_WRN("Notify OBEX (err %d).", err);
+	}
+}
+
+static void goep_l2cap_released(struct bt_l2cap_chan *chan)
+{
+	struct bt_goep_transport_v2 *goep_transport_v2 = GOEP_GET_TRANSPORT_V2(chan);
+	struct bt_goep *goep = goep_transport_v2->goep;
+
+	if (atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_CONNECTING,
+		       BT_GOEP_TRANSPORT_DISCONNECTING)) {
+		goep_l2cap_disconnected(chan);
+	}
+
+	if (!atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTING,
+			BT_GOEP_TRANSPORT_DISCONNECTED)) {
+		return;
 	}
 
 	if (goep->transport_ops->disconnected) {
@@ -401,6 +417,7 @@ static const struct bt_l2cap_chan_ops goep_l2cap_ops = {
 	.recv = goep_l2cap_recv,
 	.connected = goep_l2cap_connected,
 	.disconnected = goep_l2cap_disconnected,
+	.released = goep_l2cap_released,
 };
 
 static int goep_l2cap_send(struct bt_obex *obex, struct net_buf *buf)

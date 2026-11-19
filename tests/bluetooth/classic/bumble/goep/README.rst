@@ -60,12 +60,12 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   a newly sent request whose response remains pending. Only the former completes ABORT
   and then checks a fresh PUT; the latter still requires transport closure.
 
-* ``abort_errors.l2cap``: twenty role cases covering ambiguous SRM errors,
+* ``abort_errors.l2cap``: twenty-two role cases covering ambiguous SRM errors,
   bounded failure, contradictory replies, response-header provenance, callback reentry,
   external ACL teardown during retention, role-object reuse without clearing memory,
-  and two logical sessions sharing a transport.
+  two logical sessions sharing a transport, and shared-object transport reuse.
 
-The full directory selects eleven configurations and 216 role/transport case executions.
+The full directory selects eleven configurations and 218 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
@@ -134,6 +134,18 @@ Assertions And Boundaries
   This covers one active session and one idle sibling, not simultaneous operations,
   independent ACLs, arbitrary channels or shared-transport reuse. The fresh PUTs check
   callback routing and API usability, not standards-valid object-transfer conformance.
+* A separate shared-transport reuse pair retains an SRM GET error and observes its pending
+  work expiry before contradictory replies close the transport. It checks retained-reference
+  release and the completed L2CAP release boundary, then reconnects the same session,
+  transport and both logical role objects without fixture initialization on the same ACL.
+  Both Target registrations remain present. A rejected connection attempt precedes the
+  valid reconnect; both logical sessions complete PUTs before and after the old work expiry.
+  A test-owned timer provides the post-expiry observation event without a fixed sleep or
+  timeout increase. An additional duplicate ``released`` callback replay is an internal
+  notification-cardinality control, not a wire-level interoperability vector. The pair also
+  checks an active-connect rejection and an explicit local transport disconnect. It does
+  not cover arbitrary concurrent API calls, running old callbacks, independent ACLs or
+  RFCOMM object reuse. First-use object initialization remains required.
 * The server-route contract uses a local OBEX transport adapter and actual OBEX receive
   and response entry points. It checks route invalidation on teardown, preservation of
   registered servers, non-active versus active unregister, callback-local unregister
@@ -152,6 +164,11 @@ Assertions And Boundaries
 * The GOEP state pair wraps lower connect/disconnect only for a separate test-owned
   transport. It controls delayed and callback-before-return completion, synchronous
   failure, busy/wrong-state rejection and failure after a callback changes the state.
+  It separately observes the disconnected-before-released window: OBEX is cleaned,
+  upper notification is deferred and reconnect is rejected without reaching the lower
+  connect wrapper. A registered GOEP listener's actual accept callback followed by
+  no-connection BR channel deletion checks release-only cleanup, duplicate release and
+  a second accept on the same objects. This does not force real CID exhaustion.
   Production callbacks establish the states and notification counts are checked. This
   is an internal ordering control, not evidence that every imposed lower result/callback
   combination occurs on a real link or that arbitrary concurrent API calls are supported.

@@ -367,8 +367,11 @@ struct bt_goep_transport_l2cap_server {
 	 *  The value of the field `mtu` of @ref bt_obex::rx will be ignored. Instead, it will be
 	 *  assigned the value that be calculated based on @kconfig{CONFIG_BT_GOEP_L2CAP_MTU}.
 	 *
-	 *  @warning It is the responsibility of the caller to zero out the parent of the GOEP
-	 *  object.
+	 *  @warning The caller must zero the parent GOEP and transport objects before first use.
+	 *  Keep them valid until the disconnected notification has completed. An initialized
+	 *  instance may be reused afterward without clearing it when no application operation
+	 *  is still using the old connection. Registered OBEX servers remain registered until
+	 *  explicitly unregistered; keep those objects valid as well.
 	 *
 	 *  @note The accept callback must initialize the returned GOEP instance as follows:
 	 *        - Set @ref bt_goep::transport_ops to a valid operations table.
@@ -430,7 +433,12 @@ int bt_goep_transport_l2cap_server_register(struct bt_goep_transport_l2cap_serve
  *  The value of the field `mtu` of @ref bt_obex::rx will be ignored. Instead, it will be
  *  assigned the value that be calculated based on @kconfig{CONFIG_BT_GOEP_L2CAP_MTU}.
  *
- *  @warning It is the responsibility of the caller to zero out the parent of the GOEP object.
+ *  @warning The caller must zero the parent GOEP and transport objects before first use.
+ *  For L2CAP, the disconnected notification is delivered after the channel is released.
+ *  Once that notification has completed and no application operation is still using the
+ *  old connection, the initialized objects may be reused without clearing them. Keep
+ *  their addresses and callback bindings valid. Registered OBEX servers remain registered
+ *  until explicitly unregistered and must remain valid across reuse.
  *
  *  @note The accept callback must initialize the returned GOEP instance as follows:
  *        - Set @ref bt_goep::transport_ops to a valid operations table.

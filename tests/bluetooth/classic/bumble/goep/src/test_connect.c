@@ -9,10 +9,16 @@
 #include <zephyr/bluetooth/classic/classic.h>
 #include <zephyr/bluetooth/classic/goep.h>
 #include <zephyr/net_buf.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/ztest.h>
 
 #include "test_br.h"
 #include "test_common.h"
+
+#if defined(CONFIG_TEST_GOEP_L2CAP)
+#include <host/conn_internal.h>
+#include <host/classic/l2cap_br_internal.h>
+#endif
 
 #define TEST_MOPL    255
 #define TEST_CHANNEL 10
@@ -158,6 +164,230 @@ void test_goep_send(int err, struct net_buf *buf)
 
 static void record_operation(enum test_goep_operation operation, uint8_t status,
 			     struct net_buf *headers);
+
+#if defined(CONFIG_TEST_GOEP_L2CAP)
+static struct bt_l2cap_br_chan rx_control_chan;
+static const uint8_t rx_control_payload[96] = {1, 2, 3, 4, 5, 6};
+static atomic_t rx_control_active;
+static atomic_t rx_control_hold_end;
+static atomic_t rx_control_end_held;
+static atomic_t rx_control_generation;
+static K_SEM_DEFINE(rx_control_connected_sem, 0, 1);
+static K_SEM_DEFINE(rx_control_released_sem, 0, 1);
+static K_SEM_DEFINE(rx_control_received_sem, 0, 1);
+static K_SEM_DEFINE(rx_control_started_sem, 0, 1);
+static K_SEM_DEFINE(rx_control_end_sem, 0, 1);
+K_MSGQ_DEFINE(rx_control_held_frames, sizeof(struct net_buf *), 8, sizeof(void *));
+
+struct net_buf *__wrap_l2cap_br_data_pull(struct bt_conn *conn, size_t amount, size_t *length)
+{
+	struct net_buf *buf = __real_l2cap_br_data_pull(conn, amount, length);
+	uint16_t cid;
+	uint16_t control;
+
+	if (buf == NULL || atomic_get(&rx_control_active) == 0 ||
+	    atomic_get(&rx_control_hold_end) == 0 || buf->len < 6) {
+		return buf;
+	}
+	cid = sys_get_le16(buf->data + 2);
+	if (cid != rx_control_chan.tx.cid) {
+		return buf;
+	}
+	control = sys_get_le16(buf->data + 4);
+	if (BT_L2CAP_S_FRAME_ENH_CONTROL_GET_TYPE(control) != BT_L2CAP_CONTROL_TYPE_I ||
+	    BT_L2CAP_I_FRAME_ENH_CONTROL_GET_SAR(control) != BT_L2CAP_CONTROL_SAR_END) {
+		return buf;
+	}
+	if (amount < *length) {
+		size_t remaining;
+		struct net_buf *tail;
+
+		tail = __real_l2cap_br_data_pull(conn, *length - amount, &remaining);
+		zassert_equal_ptr(tail, buf);
+		net_buf_unref(tail);
+	}
+	zassert_ok(k_msgq_put(&rx_control_held_frames, &buf, K_NO_WAIT));
+	atomic_inc(&rx_control_end_held);
+	k_sem_give(&rx_control_end_sem);
+	return NULL;
+}
+
+void __wrap_bt_l2cap_br_recv(struct bt_conn *conn, struct net_buf *buf)
+{
+	bool observe = atomic_get(&rx_control_active) != 0 && buf->len >= 6 &&
+		       sys_get_le16(buf->data + 2) == rx_control_chan.rx.cid;
+	uint16_t control = observe ? sys_get_le16(buf->data + 4) : 0;
+	bool start = observe &&
+		     BT_L2CAP_S_FRAME_ENH_CONTROL_GET_TYPE(control) == BT_L2CAP_CONTROL_TYPE_I &&
+		     BT_L2CAP_I_FRAME_ENH_CONTROL_GET_SAR(control) == BT_L2CAP_CONTROL_SAR_START;
+
+	__real_bt_l2cap_br_recv(conn, buf);
+	if (start && rx_control_chan._sdu != NULL) {
+		k_sem_give(&rx_control_started_sem);
+	}
+}
+
+static void rx_control_connected(struct bt_l2cap_chan *chan)
+{
+	zassert_equal_ptr(chan, &rx_control_chan.chan);
+	zassert_equal_ptr(chan->conn, test_br_conn());
+	atomic_inc(&rx_control_generation);
+	k_sem_give(&rx_control_connected_sem);
+}
+
+static void rx_control_released(struct bt_l2cap_chan *chan)
+{
+	zassert_equal_ptr(chan, &rx_control_chan.chan);
+	zassert_is_null(chan->conn);
+	zassert_is_null(rx_control_chan._sdu);
+	zassert_equal(rx_control_chan._sdu_len, 0);
+#if defined(CONFIG_BT_L2CAP_SEG_RECV)
+	zassert_equal(rx_control_chan._sdu_len_done, 0);
+#endif
+	k_sem_give(&rx_control_released_sem);
+}
+
+static struct net_buf *rx_control_alloc(struct bt_l2cap_chan *chan)
+{
+	zassert_equal_ptr(chan, &rx_control_chan.chan);
+	return net_buf_alloc(&tx_pool, K_NO_WAIT);
+}
+
+static int rx_control_recv(struct bt_l2cap_chan *chan, struct net_buf *buf)
+{
+	zassert_equal_ptr(chan, &rx_control_chan.chan);
+	zassert_equal(buf->len, sizeof(rx_control_payload));
+	zassert_mem_equal(buf->data, rx_control_payload, sizeof(rx_control_payload));
+	k_sem_give(&rx_control_received_sem);
+	return 0;
+}
+
+static const struct bt_l2cap_chan_ops rx_control_ops = {
+	.connected = rx_control_connected,
+	.released = rx_control_released,
+	.alloc_buf = rx_control_alloc,
+	.recv = rx_control_recv,
+};
+
+static int rx_control_accept(struct bt_conn *conn, struct bt_l2cap_server *server,
+			     struct bt_l2cap_chan **chan)
+{
+	ARG_UNUSED(server);
+	zassert_equal_ptr(conn, test_br_conn());
+	*chan = &rx_control_chan.chan;
+	return 0;
+}
+
+static struct bt_l2cap_server rx_control_server = {
+	.psm = TEST_PSM + 4,
+	.sec_level = BT_SECURITY_L2,
+	.accept = rx_control_accept,
+};
+
+static void rx_control_open(void)
+{
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_ok(bt_l2cap_chan_connect(test_br_conn(), &rx_control_chan.chan,
+					       rx_control_server.psm));
+	}
+	wait_event(&rx_control_connected_sem);
+	zassert_equal(rx_control_chan.rx.mode, BT_L2CAP_BR_LINK_MODE_ERET);
+	zassert_false(rx_control_chan.rx.extended_control);
+	atomic_set(&rx_control_active, true);
+}
+
+static void rx_control_close(void)
+{
+	test_br_sync();
+	if (test_goep_is_client()) {
+		zassert_ok(bt_l2cap_chan_disconnect(&rx_control_chan.chan));
+	}
+	wait_event(&rx_control_released_sem);
+}
+
+static void rx_control_send(void)
+{
+	struct net_buf *buf = test_goep_pdu();
+	int err;
+
+	net_buf_add_mem(buf, rx_control_payload, sizeof(rx_control_payload));
+	err = bt_l2cap_chan_send(&rx_control_chan.chan, buf);
+	if (err < 0) {
+		net_buf_unref(buf);
+	}
+	zassert_true(err >= 0);
+}
+
+static void l2cap_rx_reuse(void)
+{
+	struct net_buf *retained;
+	struct net_buf *buf;
+
+	test_goep_open();
+	memset(&rx_control_chan, 0, sizeof(rx_control_chan));
+	rx_control_chan.chan.ops = &rx_control_ops;
+	rx_control_chan.rx.mtu = TEST_MOPL;
+	rx_control_chan.rx.mode = BT_L2CAP_BR_LINK_MODE_ERET;
+	rx_control_chan.rx.max_transmit = 3;
+	rx_control_chan.rx.mps = 48;
+	rx_control_chan.rx.fcs = BT_L2CAP_BR_FCS_16BIT;
+	rx_control_chan.required_sec_level = BT_SECURITY_L2;
+	zassert_ok(bt_l2cap_br_server_register(&rx_control_server));
+	rx_control_open();
+	test_br_sync();
+	rx_control_send();
+	wait_event(&rx_control_started_sem);
+	wait_event(&rx_control_received_sem);
+	zassert_is_null(rx_control_chan._sdu);
+	zassert_equal(rx_control_chan._sdu_len, 0);
+	atomic_set(&rx_control_hold_end, true);
+	test_br_sync();
+	rx_control_send();
+	wait_event(&rx_control_started_sem);
+	zassert_not_null(rx_control_chan._sdu);
+	zassert_equal(rx_control_chan._sdu_len, sizeof(rx_control_payload));
+	zassert_equal(k_sem_count_get(&rx_control_received_sem), 0);
+	retained = net_buf_ref(rx_control_chan._sdu);
+	zassert_equal(retained->ref, 2);
+	wait_event(&rx_control_end_sem);
+	rx_control_close();
+	zassert_true(atomic_get(&rx_control_end_held) > 0);
+	atomic_clear(&rx_control_active);
+	atomic_clear(&rx_control_hold_end);
+	while (k_msgq_get(&rx_control_held_frames, &buf, K_NO_WAIT) == 0) {
+		net_buf_unref(buf);
+	}
+	zassert_equal(retained->ref, 1);
+	bt_l2cap_br_chan_del(&rx_control_chan.chan);
+	wait_event(&rx_control_released_sem);
+	zassert_equal(retained->ref, 1);
+	net_buf_unref(retained);
+	rx_control_open();
+	zassert_equal(atomic_get(&rx_control_generation), 2);
+	test_br_sync();
+	rx_control_send();
+	wait_event(&rx_control_started_sem);
+	wait_event(&rx_control_received_sem);
+	rx_control_close();
+	atomic_clear(&rx_control_active);
+	atomic_clear(&rx_control_end_held);
+	atomic_clear(&rx_control_generation);
+	zassert_ok(bt_l2cap_br_server_unregister(&rx_control_server));
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_contracts, test_l2cap_rx_reuse)
+{
+	l2cap_rx_reuse();
+}
+
+ZTEST(goep_server_contracts, test_l2cap_rx_reuse)
+{
+	l2cap_rx_reuse();
+}
+
+#endif
 
 static void server_connect(struct bt_obex_server *obex_server, uint8_t version, uint16_t mopl,
 			   struct net_buf *headers)

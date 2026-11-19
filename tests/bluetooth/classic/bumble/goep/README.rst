@@ -39,12 +39,12 @@ OBEX Regression Configurations
 
 Five additional L2CAP configurations exercise the shared OBEX implementation:
 
-* ``api_helpers.l2cap``: ten role cases covering one-byte SSN encoding and decoding
+* ``api_helpers.l2cap``: twelve role cases covering one-byte SSN encoding and decoding
   (0, 127 and 255), adjacent headers, range/tailroom errors, empty versus missing
   End-of-Body, truncated TLVs, callback-requested early stop and UUID registration.
   The second-server registration assertion runs on the server; its client case
-  only coordinates connection lifecycle. An additional paired control covers
-  active-server route lifetime.
+  only coordinates connection lifecycle. Additional paired controls cover active-server
+  route lifetime and incomplete L2CAP RX SDU release.
 * ``abort_empty.l2cap`` and ``abort_headers.l2cap``: two role cases each, checking
   ABORT responses without headers and with exact Description bytes after a PUT Continue.
 * ``abort_matrix.l2cap``: forty-six role cases covering pending PUT/GET responses,
@@ -65,7 +65,7 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   external ACL teardown during retention, role-object reuse without clearing memory,
   and two logical sessions sharing a transport.
 
-The full directory selects eleven configurations and 212 role/transport case executions.
+The full directory selects eleven configurations and 214 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
@@ -141,6 +141,14 @@ Assertions And Boundaries
   also registered, and rejection of a no-ID
   request after the old server objects leave scope. It observes but never writes the
   active-server cache. This is an internal API control, not a wire-level UAF reproduction.
+* The RX SDU pair opens a separate ERTM channel and uses ordinary sends to generate real
+  START/END frames. A test-only TX wrapper retains the generated END while a receive
+  wrapper observes the parsed START. No frame or sequence number is injected. The pair
+  checks complete delivery, an incomplete SDU's extra reference across release, repeated
+  deletion with no connection, and bidirectional segmented delivery after reconnecting
+  the same channel without reinitialization. Retained END frames belong to the test and
+  are released explicitly. The default ``alloc_buf`` receive path is covered; direct
+  ``seg_recv`` callbacks and all retransmission/deadline interleavings are not covered.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.
   Both transport-disconnected callbacks are checked before session reuse.

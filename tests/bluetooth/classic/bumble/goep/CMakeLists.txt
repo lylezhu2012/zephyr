@@ -13,3 +13,10 @@ target_sources(app PRIVATE
   src/test_misc.c
   src/test_regressions.c
 )
+
+if(CONFIG_TEST_GOEP_L2CAP)
+  zephyr_link_libraries(
+    -Wl,--wrap=l2cap_br_data_pull
+    -Wl,--wrap=bt_l2cap_br_recv
+  )
+endif()

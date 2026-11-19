@@ -449,6 +449,11 @@ static void l2cap_br_chan_destroy(struct bt_l2cap_chan *chan)
 #if defined(CONFIG_BT_L2CAP_RET_FC)
 	k_work_cancel_delayable(&br_chan->ret_work);
 	k_work_cancel_delayable(&br_chan->monitor_work);
+	net_buf_drop(&br_chan->_sdu);
+	br_chan->_sdu_len = 0;
+#if defined(CONFIG_BT_L2CAP_SEG_RECV)
+	br_chan->_sdu_len_done = 0;
+#endif /* CONFIG_BT_L2CAP_SEG_RECV */
 #endif /* CONFIG_BT_L2CAP_RET_FC */
 
 	atomic_clear(BR_CHAN(chan)->flags);

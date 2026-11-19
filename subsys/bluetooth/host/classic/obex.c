@@ -1039,13 +1039,18 @@ static int obex_server_recv(struct bt_obex *obex, struct net_buf *buf)
 
 	ARRAY_FOR_EACH(server_handler, i) {
 		if (server_handler[i].opcode == hdr->code) {
+			sys_snode_t *server_node = &server->_node;
+
+			atomic_ptr_set(&obex->_active_server, server);
 			err = server_handler[i].handler(server, len - sizeof(*hdr), buf);
 			if (err != 0) {
-				atomic_ptr_clear(&obex->_active_server);
+				atomic_ptr_cas(&obex->_active_server, server, NULL);
 				LOG_WRN("Handler err %d", err);
+			} else if (sys_slist_find(&obex->_servers, server_node, NULL) &&
+				   atomic_get(&server->_state) != BT_OBEX_DISCONNECTED) {
+				atomic_ptr_cas(&obex->_active_server, NULL, server);
 			} else {
-				/* Save the server */
-				atomic_ptr_set(&obex->_active_server, server);
+				atomic_ptr_cas(&obex->_active_server, server, NULL);
 			}
 			return err;
 		}
@@ -1859,6 +1864,7 @@ int bt_obex_transport_disconnected(struct bt_obex *obex)
 	obex->_transport_ops = NULL;
 	atomic_ptr_clear(&obex->_active_client);
 	atomic_ptr_clear(&obex->_last_client);
+	atomic_ptr_clear(&obex->_active_server);
 
 	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&obex->_clients, client, cnext, _node) {
 		atomic_clear(&client->_opcode);
@@ -1961,6 +1967,7 @@ int bt_obex_server_unregister(struct bt_obex_server *server)
 	}
 
 	sys_slist_find_and_remove(&server->obex->_servers, &server->_node);
+	atomic_ptr_cas(&server->obex->_active_server, server, NULL);
 
 	return 0;
 }

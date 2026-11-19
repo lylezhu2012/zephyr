@@ -10,6 +10,8 @@
 #include "test_br.h"
 #include "test_common.h"
 
+#include <host/classic/obex_internal.h>
+
 static void abort_response(bool description)
 {
 	static const uint8_t message[] = "pending";
@@ -241,6 +243,163 @@ static void second_server(void)
 	test_goep_close(false);
 	zassert_ok(second_result, "second fresh UUID server must register");
 	zassert_equal(null_result, -EINVAL, "NULL parameter must not reuse stale UUID");
+}
+
+static uint8_t route_response_code;
+static unsigned int route_put_callbacks;
+static bool route_unregister_on_disconnect;
+static bool route_defer_connect;
+
+static struct net_buf *route_alloc(struct bt_obex *obex, struct net_buf_pool *pool)
+{
+	ARG_UNUSED(obex);
+	ARG_UNUSED(pool);
+	return test_goep_pdu();
+}
+
+static int route_send(struct bt_obex *obex, struct net_buf *buf)
+{
+	ARG_UNUSED(obex);
+	zassert_true(buf->len >= 3);
+	route_response_code = buf->data[0];
+	net_buf_unref(buf);
+	return 0;
+}
+
+static void route_connect_reply(struct bt_obex_server *server)
+{
+	struct net_buf *buf = test_goep_pdu();
+
+	test_goep_send(bt_obex_connect_rsp(server, BT_OBEX_RSP_CODE_SUCCESS,
+					   BT_OBEX_MIN_MTU, buf), buf);
+}
+
+static void route_connect(struct bt_obex_server *server, uint8_t version, uint16_t mopl,
+			  struct net_buf *headers)
+{
+	zassert_equal(version, 0x10);
+	zassert_equal(mopl, BT_OBEX_MIN_MTU);
+	zassert_equal(headers->len, 0);
+	if (!route_defer_connect) {
+		route_connect_reply(server);
+	}
+}
+
+static void route_disconnect(struct bt_obex_server *server, struct net_buf *headers)
+{
+	struct net_buf *buf = test_goep_pdu();
+
+	zassert_equal(headers->len, 0);
+	test_goep_send(bt_obex_disconnect_rsp(server, BT_OBEX_RSP_CODE_SUCCESS, buf), buf);
+	if (route_unregister_on_disconnect) {
+		zassert_ok(bt_obex_server_unregister(server));
+	}
+}
+
+static void route_put(struct bt_obex_server *server, bool final, struct net_buf *headers)
+{
+	ARG_UNUSED(server);
+	ARG_UNUSED(final);
+	ARG_UNUSED(headers);
+	route_put_callbacks++;
+}
+
+static const struct bt_obex_transport_ops route_transport_ops = {
+	.alloc_buf = route_alloc,
+	.send = route_send,
+};
+
+static const struct bt_obex_server_ops route_server_ops = {
+	.connect = route_connect,
+	.disconnect = route_disconnect,
+	.put = route_put,
+};
+
+static void route_recv(struct bt_obex *obex, uint8_t opcode)
+{
+	struct net_buf *buf = test_goep_pdu();
+
+	net_buf_add_u8(buf, opcode);
+	net_buf_add_be16(buf, opcode == BT_OBEX_OPCODE_CONNECT ? 7 : 3);
+	if (opcode == BT_OBEX_OPCODE_CONNECT) {
+		net_buf_add_u8(buf, 0x10);
+		net_buf_add_u8(buf, 0);
+		net_buf_add_be16(buf, BT_OBEX_MIN_MTU);
+	}
+	zassert_ok(bt_obex_recv(obex, buf));
+	net_buf_unref(buf);
+}
+
+static void server_route_lifetime(void)
+{
+	struct bt_obex obex = {.rx.mtu = BT_OBEX_MIN_MTU, .tx.mtu = BT_OBEX_MIN_MTU};
+	union bt_obex_uuid uuid;
+	static const uint8_t name[] = "route-test000001";
+
+	test_goep_open();
+	route_put_callbacks = 0;
+	route_unregister_on_disconnect = false;
+	route_defer_connect = true;
+	bt_obex_reg_transport(&obex, &route_transport_ops);
+	zassert_ok(bt_obex_transport_connected(&obex));
+	{
+		struct bt_obex_server first = {.obex = &obex, .ops = &route_server_ops};
+		struct bt_obex_server second = {.obex = &obex, .ops = &route_server_ops};
+
+		zassert_ok(bt_obex_make_uuid(&uuid, name, sizeof(name) - 1));
+		zassert_ok(bt_obex_server_register(&first, NULL));
+		zassert_ok(bt_obex_server_register(&second, &uuid.u128));
+		route_recv(&obex, BT_OBEX_OPCODE_CONNECT);
+		zassert_equal_ptr(atomic_ptr_get(&obex._active_server), &first);
+		zassert_ok(bt_obex_transport_disconnected(&obex));
+		zassert_is_null(atomic_ptr_get(&obex._active_server));
+		zassert_equal(sys_slist_len(&obex._servers), 2);
+		bt_obex_reg_transport(&obex, &route_transport_ops);
+		zassert_ok(bt_obex_transport_connected(&obex));
+		route_defer_connect = false;
+		route_recv(&obex, BT_OBEX_OPCODE_CONNECT);
+		route_recv(&obex, BT_OBEX_OPCODE_PUT_F);
+		zassert_equal(route_put_callbacks, 1);
+		route_put_callbacks = 0;
+		zassert_ok(bt_obex_transport_disconnected(&obex));
+		zassert_is_null(atomic_ptr_get(&obex._active_server));
+		bt_obex_reg_transport(&obex, &route_transport_ops);
+		zassert_ok(bt_obex_transport_connected(&obex));
+		route_defer_connect = true;
+		route_recv(&obex, BT_OBEX_OPCODE_CONNECT);
+		zassert_equal_ptr(atomic_ptr_get(&obex._active_server), &first);
+		zassert_ok(bt_obex_server_unregister(&second));
+		zassert_equal_ptr(atomic_ptr_get(&obex._active_server), &first);
+		route_connect_reply(&first);
+		route_recv(&obex, BT_OBEX_OPCODE_DISCONN);
+		zassert_is_null(atomic_ptr_get(&obex._active_server));
+		zassert_ok(bt_obex_server_unregister(&first));
+		zassert_is_null(atomic_ptr_get(&obex._active_server));
+		zassert_ok(bt_obex_server_register(&first, NULL));
+		route_defer_connect = false;
+		route_recv(&obex, BT_OBEX_OPCODE_CONNECT);
+		zassert_equal_ptr(atomic_ptr_get(&obex._active_server), &first);
+		route_unregister_on_disconnect = true;
+		route_recv(&obex, BT_OBEX_OPCODE_DISCONN);
+		route_unregister_on_disconnect = false;
+		zassert_equal(sys_slist_len(&obex._servers), 0);
+		zassert_is_null(atomic_ptr_get(&obex._active_server));
+	}
+	route_recv(&obex, BT_OBEX_OPCODE_PUT_F);
+	zassert_equal(route_response_code, BT_OBEX_RSP_CODE_NOT_FOUND);
+	zassert_equal(route_put_callbacks, 0);
+	zassert_ok(bt_obex_transport_disconnected(&obex));
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_contracts, test_server_route_lifetime)
+{
+	server_route_lifetime();
+}
+
+ZTEST(goep_server_contracts, test_server_route_lifetime)
+{
+	server_route_lifetime();
 }
 
 ZTEST(goep_client_contracts, test_ssn_encoding)

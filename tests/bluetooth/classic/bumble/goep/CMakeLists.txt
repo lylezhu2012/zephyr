@@ -18,5 +18,7 @@ if(CONFIG_TEST_GOEP_L2CAP)
   zephyr_link_libraries(
     -Wl,--wrap=l2cap_br_data_pull
     -Wl,--wrap=bt_l2cap_br_recv
+    -Wl,--wrap=bt_l2cap_chan_connect
+    -Wl,--wrap=bt_l2cap_chan_disconnect
   )
 endif()

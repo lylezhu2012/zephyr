@@ -38,6 +38,8 @@ struct net_buf *test_goep_expect(enum test_goep_operation operation, uint8_t sta
 #if defined(CONFIG_TEST_GOEP_L2CAP)
 struct net_buf *__real_l2cap_br_data_pull(struct bt_conn *conn, size_t amount, size_t *length);
 void __real_bt_l2cap_br_recv(struct bt_conn *conn, struct net_buf *buf);
+int __real_bt_l2cap_chan_connect(struct bt_conn *conn, struct bt_l2cap_chan *chan, uint16_t psm);
+int __real_bt_l2cap_chan_disconnect(struct bt_l2cap_chan *chan);
 #endif
 
 #endif

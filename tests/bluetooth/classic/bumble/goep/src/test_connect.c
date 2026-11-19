@@ -387,6 +387,220 @@ ZTEST(goep_server_contracts, test_l2cap_rx_reuse)
 	l2cap_rx_reuse();
 }
 
+enum state_control_mode {
+	STATE_CONTROL_DELAYED,
+	STATE_CONTROL_FAILURE,
+	STATE_CONTROL_CONNECTED,
+	STATE_CONTROL_CONNECTED_ERROR,
+	STATE_CONTROL_RELEASED,
+	STATE_CONTROL_RELEASED_ERROR,
+};
+
+static struct bt_goep state_control_goep;
+static struct bt_goep_transport state_control_transport;
+static enum state_control_mode state_control_connect_mode;
+static enum state_control_mode state_control_disconnect_mode;
+static unsigned int state_control_connect_calls;
+static unsigned int state_control_disconnect_calls;
+static unsigned int state_control_connections;
+static unsigned int state_control_disconnections;
+
+static void state_control_complete_connect(void)
+{
+	struct bt_l2cap_chan *chan = &state_control_transport.v2.chan.chan;
+
+	state_control_transport.v2.chan.tx.mtu = TEST_MOPL;
+	chan->ops->connected(chan);
+}
+
+static void state_control_complete_release(void)
+{
+	struct bt_l2cap_chan *chan = &state_control_transport.v2.chan.chan;
+	unsigned int notices = state_control_disconnections;
+	unsigned int calls = state_control_connect_calls;
+
+	chan->ops->disconnected(chan);
+	if (chan->ops->released != NULL) {
+		zassert_equal(atomic_get(&state_control_goep._state),
+			      BT_GOEP_TRANSPORT_DISCONNECTING);
+		zassert_equal(state_control_disconnections, notices);
+		zassert_is_null(state_control_goep.obex._transport_ops);
+		zassert_equal(bt_goep_transport_l2cap_connect(test_br_conn(), &state_control_goep,
+							     TEST_PSM), -EBUSY);
+		zassert_equal(state_control_connect_calls, calls);
+		chan->ops->released(chan);
+		zassert_equal(atomic_get(&state_control_goep._state),
+			      BT_GOEP_TRANSPORT_DISCONNECTED);
+		zassert_equal(state_control_disconnections, notices + 1);
+		chan->ops->released(chan);
+		zassert_equal(state_control_disconnections, notices + 1);
+	}
+}
+
+int __wrap_bt_l2cap_chan_connect(struct bt_conn *conn, struct bt_l2cap_chan *chan, uint16_t psm)
+{
+	if (chan != &state_control_transport.v2.chan.chan) {
+		return __real_bt_l2cap_chan_connect(conn, chan, psm);
+	}
+	state_control_connect_calls++;
+	zassert_equal(atomic_get(&state_control_goep._state), BT_GOEP_TRANSPORT_CONNECTING);
+	if (state_control_connect_mode == STATE_CONTROL_CONNECTED ||
+	    state_control_connect_mode == STATE_CONTROL_CONNECTED_ERROR) {
+		state_control_complete_connect();
+	} else if (state_control_connect_mode == STATE_CONTROL_RELEASED_ERROR) {
+		state_control_complete_release();
+	}
+	return state_control_connect_mode == STATE_CONTROL_FAILURE ||
+		       state_control_connect_mode == STATE_CONTROL_CONNECTED_ERROR ||
+		       state_control_connect_mode == STATE_CONTROL_RELEASED_ERROR ? -EIO : 0;
+}
+
+int __wrap_bt_l2cap_chan_disconnect(struct bt_l2cap_chan *chan)
+{
+	if (chan != &state_control_transport.v2.chan.chan) {
+		return __real_bt_l2cap_chan_disconnect(chan);
+	}
+	state_control_disconnect_calls++;
+	zassert_equal(atomic_get(&state_control_goep._state), BT_GOEP_TRANSPORT_DISCONNECTING);
+	if (state_control_disconnect_mode == STATE_CONTROL_RELEASED ||
+	    state_control_disconnect_mode == STATE_CONTROL_RELEASED_ERROR) {
+		state_control_complete_release();
+	}
+	return state_control_disconnect_mode == STATE_CONTROL_FAILURE ||
+		       state_control_disconnect_mode == STATE_CONTROL_RELEASED_ERROR ? -EIO : 0;
+}
+
+static void state_control_connected(struct bt_conn *conn, struct bt_goep *goep)
+{
+	zassert_equal_ptr(conn, test_br_conn());
+	zassert_equal_ptr(goep, &state_control_goep);
+	state_control_connections++;
+}
+
+static void state_control_disconnected(struct bt_goep *goep)
+{
+	zassert_equal_ptr(goep, &state_control_goep);
+	state_control_disconnections++;
+}
+
+static const struct bt_goep_transport_ops state_control_ops = {
+	.connected = state_control_connected,
+	.disconnected = state_control_disconnected,
+};
+
+static int state_control_accept(struct bt_conn *conn,
+				struct bt_goep_transport_l2cap_server *listener,
+				struct bt_goep **goep)
+{
+	ARG_UNUSED(conn);
+	ARG_UNUSED(listener);
+	*goep = &state_control_goep;
+	return 0;
+}
+
+static struct bt_goep_transport_l2cap_server state_control_server = {
+	.l2cap = {
+		.psm = TEST_PSM + 6,
+		.sec_level = BT_SECURITY_L2,
+	},
+	.accept = state_control_accept,
+};
+
+static void state_control_connect(enum state_control_mode mode, int result,
+				  enum bt_goep_transport_state state)
+{
+	state_control_connect_mode = mode;
+	zassert_equal(bt_goep_transport_l2cap_connect(test_br_conn(), &state_control_goep,
+						     TEST_PSM), result);
+	zassert_equal(atomic_get(&state_control_goep._state), state);
+}
+
+static void state_control_disconnect(enum state_control_mode mode, int result,
+				     enum bt_goep_transport_state state)
+{
+	state_control_disconnect_mode = mode;
+	zassert_equal(bt_goep_transport_l2cap_disconnect(&state_control_goep), result);
+	zassert_equal(atomic_get(&state_control_goep._state), state);
+}
+
+static void l2cap_state_admission(void)
+{
+	unsigned int calls;
+
+	test_goep_open();
+	memset(&state_control_goep, 0, sizeof(state_control_goep));
+	memset(&state_control_transport, 0, sizeof(state_control_transport));
+	state_control_connect_calls = 0;
+	state_control_disconnect_calls = 0;
+	state_control_connections = 0;
+	state_control_disconnections = 0;
+	state_control_goep.transport_ops = &state_control_ops;
+	BT_GOEP_INIT_V2(&state_control_goep, &state_control_transport.v2);
+	state_control_connect(STATE_CONTROL_FAILURE, -EIO, BT_GOEP_TRANSPORT_DISCONNECTED);
+	zassert_equal(bt_goep_transport_l2cap_disconnect(&state_control_goep), -ENOTCONN);
+	zassert_equal(state_control_disconnect_calls, 0);
+	state_control_connect(STATE_CONTROL_DELAYED, 0, BT_GOEP_TRANSPORT_CONNECTING);
+	calls = state_control_connect_calls;
+	zassert_equal(bt_goep_transport_l2cap_connect(test_br_conn(), &state_control_goep,
+						     TEST_PSM), -EBUSY);
+	zassert_equal(state_control_connect_calls, calls);
+	state_control_complete_connect();
+	zassert_equal(atomic_get(&state_control_goep._state), BT_GOEP_TRANSPORT_CONNECTED);
+	state_control_disconnect(STATE_CONTROL_DELAYED, 0, BT_GOEP_TRANSPORT_DISCONNECTING);
+	calls = state_control_disconnect_calls;
+	zassert_equal(bt_goep_transport_l2cap_disconnect(&state_control_goep), -ENOTCONN);
+	zassert_equal(state_control_disconnect_calls, calls);
+	state_control_complete_release();
+	zassert_equal(atomic_get(&state_control_goep._state), BT_GOEP_TRANSPORT_DISCONNECTED);
+	state_control_connect(STATE_CONTROL_CONNECTED, 0, BT_GOEP_TRANSPORT_CONNECTED);
+	state_control_disconnect(STATE_CONTROL_FAILURE, -EIO, BT_GOEP_TRANSPORT_CONNECTED);
+	state_control_disconnect(STATE_CONTROL_RELEASED, 0, BT_GOEP_TRANSPORT_DISCONNECTED);
+	state_control_connect(STATE_CONTROL_RELEASED_ERROR, -EIO, BT_GOEP_TRANSPORT_DISCONNECTED);
+	state_control_connect(STATE_CONTROL_CONNECTED_ERROR, -EIO, BT_GOEP_TRANSPORT_CONNECTED);
+	state_control_disconnect(STATE_CONTROL_RELEASED_ERROR, -EIO,
+				 BT_GOEP_TRANSPORT_DISCONNECTED);
+	zassert_equal(state_control_connect_calls, 5);
+	zassert_equal(state_control_disconnect_calls, 4);
+	zassert_equal(state_control_connections, 3);
+	zassert_equal(state_control_disconnections, 4);
+	if (state_control_transport.v2.chan.chan.ops->released != NULL) {
+		struct bt_l2cap_chan *chan;
+		unsigned int notices = state_control_disconnections;
+
+		zassert_ok(bt_goep_transport_l2cap_server_register(&state_control_server));
+		zassert_ok(state_control_server.l2cap.accept(test_br_conn(),
+						     &state_control_server.l2cap, &chan));
+		zassert_equal_ptr(chan, &state_control_transport.v2.chan.chan);
+		zassert_is_null(chan->conn);
+		zassert_equal(atomic_get(&state_control_goep._state), BT_GOEP_TRANSPORT_CONNECTING);
+		zassert_not_null(state_control_goep.obex._transport_ops);
+		bt_l2cap_br_chan_del(chan);
+		zassert_equal(atomic_get(&state_control_goep._state),
+			      BT_GOEP_TRANSPORT_DISCONNECTED);
+		zassert_is_null(state_control_goep.obex._transport_ops);
+		zassert_equal(state_control_disconnections, notices + 1);
+		bt_l2cap_br_chan_del(chan);
+		zassert_equal(state_control_disconnections, notices + 1);
+		zassert_ok(state_control_server.l2cap.accept(test_br_conn(),
+						     &state_control_server.l2cap, &chan));
+		bt_l2cap_br_chan_del(chan);
+		zassert_equal(atomic_get(&state_control_goep._state),
+			      BT_GOEP_TRANSPORT_DISCONNECTED);
+		zassert_is_null(state_control_goep.obex._transport_ops);
+		zassert_equal(state_control_disconnections, notices + 2);
+	}
+	test_goep_close(false);
+}
+
+ZTEST(goep_client_contracts, test_l2cap_state_admission)
+{
+	l2cap_state_admission();
+}
+
+ZTEST(goep_server_contracts, test_l2cap_state_admission)
+{
+	l2cap_state_admission();
+}
 #endif
 
 static void server_connect(struct bt_obex_server *obex_server, uint8_t version, uint16_t mopl,

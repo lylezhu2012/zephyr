@@ -554,7 +554,6 @@ int bt_goep_transport_l2cap_server_register(struct bt_goep_transport_l2cap_serve
 int bt_goep_transport_l2cap_connect(struct bt_conn *conn, struct bt_goep *goep, uint16_t psm)
 {
 	int err;
-	uint32_t state;
 
 	if (conn == NULL || goep == NULL || goep->v2 == NULL || goep->v1 != NULL ||
 	    goep->transport_ops == NULL) {
@@ -562,9 +561,9 @@ int bt_goep_transport_l2cap_connect(struct bt_conn *conn, struct bt_goep *goep, 
 		return -EINVAL;
 	}
 
-	state = atomic_get(&goep->_state);
-	if (state != BT_GOEP_TRANSPORT_DISCONNECTED) {
-		LOG_DBG("Invalid stats %d", state);
+	if (!atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTED,
+			BT_GOEP_TRANSPORT_CONNECTING)) {
+		LOG_DBG("Invalid state");
 		return -EBUSY;
 	}
 
@@ -573,10 +572,10 @@ int bt_goep_transport_l2cap_connect(struct bt_conn *conn, struct bt_goep *goep, 
 	err = bt_l2cap_chan_connect(conn, &goep->v2->chan.chan, psm);
 	if (err != 0) {
 		LOG_ERR("Fail to create L2CAP connection");
+		atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_CONNECTING,
+			   BT_GOEP_TRANSPORT_DISCONNECTED);
 		return err;
 	}
-
-	atomic_set(&goep->_state, BT_GOEP_TRANSPORT_CONNECTING);
 
 	return 0;
 }
@@ -584,26 +583,25 @@ int bt_goep_transport_l2cap_connect(struct bt_conn *conn, struct bt_goep *goep, 
 int bt_goep_transport_l2cap_disconnect(struct bt_goep *goep)
 {
 	int err;
-	uint32_t state;
 
 	if (goep == NULL || goep->v2 == NULL) {
 		LOG_DBG("Invalid parameter");
 		return -EINVAL;
 	}
 
-	state = atomic_get(&goep->_state);
-	if (state != BT_GOEP_TRANSPORT_CONNECTED) {
-		LOG_DBG("Invalid stats %d", state);
+	if (!atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_CONNECTED,
+			BT_GOEP_TRANSPORT_DISCONNECTING)) {
+		LOG_DBG("Invalid state");
 		return -ENOTCONN;
 	}
 
 	err = bt_l2cap_chan_disconnect(&goep->v2->chan.chan);
 	if (err != 0) {
 		LOG_WRN("Fail to disconnect L2CAP channel");
+		atomic_cas(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTING,
+			   BT_GOEP_TRANSPORT_CONNECTED);
 		return err;
 	}
-
-	atomic_set(&goep->_state, BT_GOEP_TRANSPORT_DISCONNECTING);
 
 	return 0;
 }

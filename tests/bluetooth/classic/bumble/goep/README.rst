@@ -39,12 +39,12 @@ OBEX Regression Configurations
 
 Five additional L2CAP configurations exercise the shared OBEX implementation:
 
-* ``api_helpers.l2cap``: twelve role cases covering one-byte SSN encoding and decoding
+* ``api_helpers.l2cap``: fourteen role cases covering one-byte SSN encoding and decoding
   (0, 127 and 255), adjacent headers, range/tailroom errors, empty versus missing
   End-of-Body, truncated TLVs, callback-requested early stop and UUID registration.
   The second-server registration assertion runs on the server; its client case
   only coordinates connection lifecycle. Additional paired controls cover active-server
-  route lifetime and incomplete L2CAP RX SDU release.
+  route lifetime, incomplete L2CAP RX SDU release and GOEP state admission ordering.
 * ``abort_empty.l2cap`` and ``abort_headers.l2cap``: two role cases each, checking
   ABORT responses without headers and with exact Description bytes after a PUT Continue.
 * ``abort_matrix.l2cap``: forty-six role cases covering pending PUT/GET responses,
@@ -65,7 +65,7 @@ Five additional L2CAP configurations exercise the shared OBEX implementation:
   external ACL teardown during retention, role-object reuse without clearing memory,
   and two logical sessions sharing a transport.
 
-The full directory selects eleven configurations and 214 role/transport case executions.
+The full directory selects eleven configurations and 216 role/transport case executions.
 The new matrix uses public L2CAP/RFCOMM send APIs on the test-owned transport to
 place old responses before the ABORT response. It does not inject private OBEX
 state, add fixed sleeps or increase timeouts. These are callback-routing regression
@@ -149,6 +149,12 @@ Assertions And Boundaries
   the same channel without reinitialization. Retained END frames belong to the test and
   are released explicitly. The default ``alloc_buf`` receive path is covered; direct
   ``seg_recv`` callbacks and all retransmission/deadline interleavings are not covered.
+* The GOEP state pair wraps lower connect/disconnect only for a separate test-owned
+  transport. It controls delayed and callback-before-return completion, synchronous
+  failure, busy/wrong-state rejection and failure after a callback changes the state.
+  Production callbacks establish the states and notification counts are checked. This
+  is an internal ordering control, not evidence that every imposed lower result/callback
+  combination occurs on a real link or that arbitrary concurrent API calls are supported.
 * Authentication and operation scenarios release the ACL directly after
   their responses, without preceding OBEX or transport disconnect requests.
   Both transport-disconnected callbacks are checked before session reuse.
